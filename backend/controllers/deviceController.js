@@ -1,5 +1,6 @@
 
 const Device = require('../models/Device');
+const crypto = require('crypto');
 const ActivityLog = require('../models/ActivityLog');
 const SecurityAlert = require('../models/SecurityAlert');
 // Access io via req.app.get('io') where needed instead of legacy socketService
@@ -105,6 +106,9 @@ const createDevice = async (req, res) => {
     }
 
     // Create new device
+    // Generate a secure device secret (48 hex chars) if not provided
+    const deviceSecret = crypto.randomBytes(24).toString('hex');
+
     const device = new Device({
       name,
       macAddress,
@@ -119,6 +123,7 @@ const createDevice = async (req, res) => {
         state: false, // Initialize all switches to off
         lastStateChange: new Date()
       })),
+      deviceSecret,
       createdBy: req.user.id,
       lastModifiedBy: req.user.id
     });
@@ -144,9 +149,11 @@ const createDevice = async (req, res) => {
     // Broadcast new device
     req.app.get('io').emit('device_state_changed', { deviceId: device.id, state: device });
 
+    // Include secret separately so API clients can capture it (model hides it by select:false in future fetches)
     res.status(201).json({
       success: true,
-      data: device
+      data: device,
+      deviceSecret // expose once on create
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });

@@ -336,7 +336,8 @@ wss.on('connection', (ws) => {
         }
         device.lastSeen = new Date();
         await device.save();
-        io.emit('device_state_changed', { deviceId: device.id, state: device });
+  io.emit('device_state_changed', { deviceId: device.id, state: device });
+  ws.send(JSON.stringify({ type: 'state_ack', ts: Date.now(), changed }));
       } catch (e) {
         logger.error('[esp32 state_update] error', e.message);
       }
