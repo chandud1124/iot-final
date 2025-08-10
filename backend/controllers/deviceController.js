@@ -148,6 +148,35 @@ const createDevice = async (req, res) => {
 
     // Broadcast new device
     req.app.get('io').emit('device_state_changed', { deviceId: device.id, state: device });
+    // Also broadcast new configuration to any raw WS client (ESP32) managing this device
+    try {
+      const cfgMsg = {
+        type: 'config_update',
+        deviceId: device.id,
+        switches: device.switches.map(sw => ({
+          gpio: sw.gpio,
+          relayGpio: sw.relayGpio,
+          name: sw.name,
+          manualSwitchGpio: sw.manualSwitchGpio,
+          manualSwitchEnabled: sw.manualSwitchEnabled,
+          state: sw.state
+        })),
+        pirEnabled: device.pirEnabled,
+        pirGpio: device.pirGpio,
+        pirAutoOffDelay: device.pirAutoOffDelay
+      };
+      // Emit over Socket.IO for web clients
+      req.app.get('io').emit('config_update', cfgMsg);
+      // Emit over raw WS directly to device if connected
+      if (global.wsDevices && device.macAddress) {
+        const ws = global.wsDevices.get(device.macAddress.toUpperCase());
+        if (ws && ws.readyState === 1) {
+          ws.send(JSON.stringify(cfgMsg));
+        }
+      }
+    } catch (e) {
+      if (process.env.NODE_ENV !== 'production') console.warn('[config_update emit failed]', e.message);
+    }
 
     // Include secret separately so API clients can capture it (model hides it by select:false in future fetches)
     res.status(201).json({
@@ -315,7 +344,7 @@ const toggleSwitch = async (req, res) => {
             const payload = {
               type: 'switch_command',
               mac: device.macAddress,
-              gpio: device.switches[switchIndex].relayGpio,
+              gpio: device.switches[switchIndex].relayGpio || device.switches[switchIndex].gpio,
               state: device.switches[switchIndex].state,
             };
             ws.send(JSON.stringify(payload));
@@ -393,11 +422,35 @@ const getDeviceStats = async (req, res) => {
 
 const getDeviceById = async (req, res) => {
   try {
-    const device = await Device.findById(req.params.deviceId);
+    // If admin wants secret, explicitly select it
+    const includeSecret = req.query.includeSecret === '1' || req.query.includeSecret === 'true';
+  let query = Device.findById(req.params.deviceId);
+    if (includeSecret && req.user && req.user.role === 'admin') {
+      query = query.select('+deviceSecret');
+    }
+    let device = await query;
     if (!device) {
       return res.status(404).json({ message: 'Device not found' });
     }
-    res.json({ success: true, data: device });
+    // Optional PIN gate for secret (set DEVICE_SECRET_PIN in env). If set, must match ?secretPin=.
+    if (includeSecret && req.user && req.user.role === 'admin') {
+      const requiredPin = process.env.DEVICE_SECRET_PIN;
+      if (requiredPin && (req.query.secretPin !== requiredPin)) {
+        return res.status(403).json({ message: 'Invalid PIN' });
+      }
+    }
+    // Auto-generate a secret if missing and admin requested it
+    if (includeSecret && req.user && req.user.role === 'admin' && !device.deviceSecret) {
+      const crypto = require('crypto');
+      device.deviceSecret = crypto.randomBytes(24).toString('hex');
+      await device.save();
+    }
+    // Avoid leaking secret unless explicitly requested
+    const raw = device.toObject();
+    if (!(includeSecret && req.user && req.user.role === 'admin')) {
+      delete raw.deviceSecret;
+    }
+    res.json({ success: true, data: raw, deviceSecret: includeSecret && req.user && req.user.role === 'admin' ? raw.deviceSecret : undefined });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }

@@ -37,34 +37,78 @@ exports.getDeviceConfig = async (req, res) => {
 exports.updateDeviceStatus = async (req, res) => {
     try {
         const { macAddress } = req.params;
-        const { switchId, state } = req.body;
+        const { switchId, state, switches, heartbeat } = req.body || {};
 
-        const device = await Device.findOne({ macAddress });
+        // Case-insensitive match for MAC address
+        const device = await Device.findOne({ macAddress: new RegExp('^' + macAddress + '$', 'i') });
         if (!device) {
             return res.status(404).json({ error: 'Device not found' });
         }
 
-        // Update switch state if provided
+        let changed = false;
+
+        // Update a single switch by id
         if (switchId && state !== undefined) {
             const switchToUpdate = device.switches.id(switchId);
             if (!switchToUpdate) {
                 return res.status(404).json({ error: 'Switch not found' });
             }
-            switchToUpdate.state = state;
+            if (switchToUpdate.state !== state) {
+                switchToUpdate.state = state;
+                changed = true;
+            }
         }
 
-        // Update last seen timestamp
+        // Bulk update (array of {id/state}) optionally sent by firmware
+        if (Array.isArray(switches)) {
+            switches.forEach(sw => {
+                if (sw.id && typeof sw.state === 'boolean') {
+                    const existing = device.switches.id(sw.id);
+                    if (existing && existing.state !== sw.state) {
+                        existing.state = sw.state;
+                        changed = true;
+                    }
+                }
+            });
+        }
+
+        // Always update lastSeen & mark device online on heartbeat or any update
         device.lastSeen = new Date();
-        await device.save();
+        if (device.status !== 'online') {
+            device.status = 'online';
+            changed = true; // status change
+        }
 
-        // Log the activity
-        await ActivityLog.create({
-            deviceId: device._id,
-            action: 'status_update',
-            details: statusData
-        });
+        if (changed) {
+            await device.save();
+        } else {
+            // Save lastSeen even if no switch changes (avoid validation if nothing else changed)
+            await device.updateOne({ lastSeen: device.lastSeen, status: 'online' });
+        }
 
-        res.json({ success: true, device });
+        // Log activity only when state actually changed (not for pure heartbeat)
+        if (changed) {
+            await ActivityLog.create({
+                deviceId: device._id,
+                deviceName: device.name,
+                action: 'status_update',
+                triggeredBy: 'device',
+                details: {
+                    heartbeat: !!heartbeat,
+                    singleSwitch: switchId ? { switchId, state } : undefined,
+                    bulkCount: Array.isArray(switches) ? switches.length : undefined
+                }
+            }).catch(()=>{});
+        }
+
+        // Emit socket event so UI refreshes in real-time
+        try {
+            req.app.get('io').emit('device_state_changed', { deviceId: device.id, state: device });
+        } catch (e) {
+            if (process.env.NODE_ENV !== 'production') console.warn('[emit device_state_changed failed]', e.message);
+        }
+
+        res.json({ success: true, data: device, changed });
     } catch (error) {
         console.error('Error updating device status:', error);
         res.status(500).json({ 

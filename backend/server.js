@@ -231,17 +231,35 @@ const createAdminUser = async () => {
   }
 };
 
-// Socket.IO for real-time updates
+// Socket.IO for real-time updates with additional diagnostics
+io.engine.on('connection_error', (err) => {
+  logger.error('[socket.io engine connection_error]', {
+    code: err.code,
+    message: err.message,
+    context: err.context
+  });
+});
+
 io.on('connection', (socket) => {
   logger.info('Client connected:', socket.id);
-  
+  // Emit a hello for quick handshake debug
+  socket.emit('server_hello', { ts: Date.now() });
+
   socket.on('join-room', (room) => {
-    socket.join(room);
-    logger.info(`Socket ${socket.id} joined room ${room}`);
+    try {
+      socket.join(room);
+      logger.info(`Socket ${socket.id} joined room ${room}`);
+    } catch (e) {
+      logger.error('[join-room error]', e.message);
+    }
   });
 
-  socket.on('disconnect', () => {
-    logger.info('Client disconnected:', socket.id);
+  socket.on('ping_test', (cb) => {
+    if (typeof cb === 'function') cb({ pong: Date.now() });
+  });
+
+  socket.on('disconnect', (reason) => {
+    logger.info('Client disconnected:', socket.id, 'reason:', reason);
   });
 });
 
@@ -288,7 +306,20 @@ wss.on('connection', (ws) => {
         device.status = 'online';
         device.lastSeen = new Date();
         await device.save();
-        ws.send(JSON.stringify({ type: 'identified', mac, mode: device.deviceSecret ? 'secure' : 'insecure' }));
+        // Build minimal switch config (exclude sensitive/internal fields)
+        const switchConfig = Array.isArray(device.switches) ? device.switches.map(sw => ({
+          gpio: sw.gpio,
+          relayGpio: sw.relayGpio,
+          name: sw.name,
+          manualSwitchGpio: sw.manualSwitchGpio,
+          manualSwitchEnabled: sw.manualSwitchEnabled
+        })) : [];
+        ws.send(JSON.stringify({
+          type: 'identified',
+            mac,
+            mode: device.deviceSecret ? 'secure' : 'insecure',
+            switches: switchConfig
+        }));
         logger.info(`[esp32] identified ${mac}`);
       } catch (e) {
         logger.error('[identify] error', e.message);
@@ -348,6 +379,20 @@ wss.on('connection', (ws) => {
     if (ws.mac) {
       wsDevices.delete(ws.mac);
       logger.info(`[esp32] disconnected ${ws.mac}`);
+      // Immediately mark device offline instead of waiting for periodic scan
+      (async () => {
+        try {
+          const Device = require('./models/Device');
+          const d = await Device.findOne({ macAddress: ws.mac });
+          if (d && d.status !== 'offline') {
+            d.status = 'offline';
+            await d.save();
+            io.emit('device_state_changed', { deviceId: d.id, state: d });
+          }
+        } catch (e) {
+          logger.error('[ws close offline update] error', e.message);
+        }
+      })();
     }
   });
 });
