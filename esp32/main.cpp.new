@@ -1,0 +1,262 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <EEPROM.h>
+#include "config.h"
+
+// Pin definitions
+const int LED_BUILTIN_PIN = 2;
+const int PIR_SENSOR_PIN = 16;
+const int MANUAL_SWITCH_PINS[] = {14, 12, 13, 15}; // Manual override switches
+const int RELAY_PINS[] = {2, 4, 5, 18}; // Relay control pins
+
+// Variables
+String deviceId = "";
+String authToken = "";
+unsigned long lastStatusUpdate = 0;
+unsigned long lastCommandCheck = 0;
+unsigned long lastSensorRead = 0;
+bool pirState = false;
+bool relayStates[4] = {false, false, false, false};
+bool manualOverride[4] = {false, false, false, false};
+
+// Constants
+const unsigned long STATUS_UPDATE_INTERVAL = 30000;  // Send status every 30 seconds
+const unsigned long COMMAND_CHECK_INTERVAL = 5000;   // Check for commands every 5 seconds
+const unsigned long SENSOR_READ_INTERVAL = 1000;     // Read sensors every second
+
+// Server API endpoints
+const char* API_BASE_URL = "http://your-server:3001/api";
+String getApiUrl(const char* endpoint) {
+  return String(API_BASE_URL) + endpoint;
+}
+
+void setup() {
+  Serial.begin(115200);
+  EEPROM.begin(512);
+  
+  // Initialize pins
+  pinMode(LED_BUILTIN_PIN, OUTPUT);
+  pinMode(PIR_SENSOR_PIN, INPUT);
+  
+  for (int i = 0; i < 4; i++) {
+    pinMode(RELAY_PINS[i], OUTPUT);
+    pinMode(MANUAL_SWITCH_PINS[i], INPUT_PULLUP);
+    digitalWrite(RELAY_PINS[i], LOW);
+  }
+  
+  // Load configuration from EEPROM
+  loadConfiguration();
+  
+  // Connect to WiFi
+  connectWiFi();
+  
+  // Register device with server
+  if (deviceId.length() == 0) {
+    registerDevice();
+  }
+}
+
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connection lost. Reconnecting...");
+    connectWiFi();
+    return;
+  }
+
+  unsigned long currentMillis = millis();
+
+  // Read sensors and check manual switches
+  if (currentMillis - lastSensorRead >= SENSOR_READ_INTERVAL) {
+    readSensors();
+    checkManualSwitches();
+    lastSensorRead = currentMillis;
+  }
+
+  // Send status update to server
+  if (currentMillis - lastStatusUpdate >= STATUS_UPDATE_INTERVAL) {
+    sendStatusUpdate();
+    lastStatusUpdate = currentMillis;
+  }
+
+  // Check for new commands
+  if (currentMillis - lastCommandCheck >= COMMAND_CHECK_INTERVAL) {
+    checkForCommands();
+    lastCommandCheck = currentMillis;
+  }
+}
+
+void sendStatusUpdate() {
+  HTTPClient http;
+  
+  String url = getApiUrl("/device-api/" + deviceId + "/status");
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  
+  // Create JSON status object
+  StaticJsonDocument<200> doc;
+  doc["pirState"] = pirState;
+  
+  JsonArray relays = doc.createNestedArray("relays");
+  for (int i = 0; i < 4; i++) {
+    JsonObject relay = relays.createNestedObject();
+    relay["index"] = i;
+    relay["state"] = relayStates[i];
+    relay["manual"] = manualOverride[i];
+  }
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  int httpCode = http.POST(jsonString);
+  
+  if (httpCode > 0) {
+    String payload = http.getString();
+    Serial.println("Status update response: " + payload);
+  } else {
+    Serial.println("Error sending status update");
+  }
+  
+  http.end();
+}
+
+void checkForCommands() {
+  HTTPClient http;
+  
+  String url = getApiUrl("/device-api/" + deviceId + "/commands");
+  http.begin(url);
+  
+  int httpCode = http.GET();
+  
+  if (httpCode > 0) {
+    String payload = http.getString();
+    
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    
+    if (!error) {
+      JsonArray commands = doc["commands"];
+      
+      for (JsonVariant command : commands) {
+        const char* type = command["type"];
+        JsonObject payload = command["payload"];
+        
+        if (strcmp(type, "setRelay") == 0) {
+          int index = payload["index"];
+          bool state = payload["state"];
+          
+          if (index >= 0 && index < 4 && !manualOverride[index]) {
+            setRelay(index, state);
+          }
+        }
+        // Add other command types here
+      }
+    }
+  }
+  
+  http.end();
+}
+
+void readSensors() {
+  // Read PIR sensor
+  bool newPirState = digitalRead(PIR_SENSOR_PIN) == HIGH;
+  if (newPirState != pirState) {
+    pirState = newPirState;
+    // Trigger immediate status update if motion detected
+    if (pirState) {
+      sendStatusUpdate();
+    }
+  }
+}
+
+void checkManualSwitches() {
+  for (int i = 0; i < 4; i++) {
+    bool switchState = digitalRead(MANUAL_SWITCH_PINS[i]) == LOW;  // Active LOW
+    if (switchState) {
+      manualOverride[i] = true;
+      setRelay(i, !relayStates[i]);  // Toggle relay state
+      delay(50);  // Simple debounce
+    }
+  }
+}
+
+void setRelay(int index, bool state) {
+  if (index >= 0 && index < 4) {
+    digitalWrite(RELAY_PINS[index], state ? HIGH : LOW);
+    relayStates[index] = state;
+    // Trigger immediate status update
+    sendStatusUpdate();
+  }
+}
+
+void registerDevice() {
+  HTTPClient http;
+  
+  String url = getApiUrl("/devices/register");
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  
+  StaticJsonDocument<200> doc;
+  doc["macAddress"] = WiFi.macAddress();
+  doc["type"] = "relay-controller";
+  doc["name"] = "ESP32 Controller";
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  int httpCode = http.POST(jsonString);
+  
+  if (httpCode > 0) {
+    String payload = http.getString();
+    StaticJsonDocument<200> response;
+    DeserializationError error = deserializeJson(response, payload);
+    
+    if (!error) {
+      deviceId = response["deviceId"].as<String>();
+      // Save deviceId to EEPROM
+      saveConfiguration();
+    }
+  }
+  
+  http.end();
+}
+
+void connectWiFi() {
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+    Serial.println("IP address: " + WiFi.localIP().toString());
+  } else {
+    Serial.println("\nWiFi connection failed!");
+    ESP.restart();
+  }
+}
+
+void loadConfiguration() {
+  // Read deviceId from EEPROM
+  String savedId = "";
+  for (int i = 0; i < 24; i++) {
+    char c = EEPROM.read(i);
+    if (c == 0) break;
+    savedId += c;
+  }
+  deviceId = savedId;
+}
+
+void saveConfiguration() {
+  // Save deviceId to EEPROM
+  for (int i = 0; i < deviceId.length(); i++) {
+    EEPROM.write(i, deviceId[i]);
+  }
+  EEPROM.write(deviceId.length(), 0);
+  EEPROM.commit();
+}

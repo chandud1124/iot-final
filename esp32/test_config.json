@@ -1,0 +1,24 @@
+{
+  "name": "Test ESP32",
+  "location": "Test Room",
+  "pirEnabled": true,
+  "pirGpio": 16,
+  "pirAutoOffDelay": 30,
+  "switches": [
+    {
+      "name": "Main Light",
+      "gpio": 2,
+      "type": "light"
+    },
+    {
+      "name": "Fan",
+      "gpio": 4,
+      "type": "fan"
+    },
+    {
+      "name": "Projector",
+      "gpio": 5,
+      "type": "projector"
+    }
+  ]
+}

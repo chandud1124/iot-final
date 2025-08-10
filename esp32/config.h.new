@@ -1,0 +1,7 @@
+// WiFi Configuration
+#define WIFI_SSID "Your_WiFi_SSID"
+#define WIFI_PASSWORD "Your_WiFi_Password"
+
+// Server Configuration
+#define SERVER_HOST "your-server.com"  // Your server hostname or IP
+#define SERVER_PORT 3001               // Your server port

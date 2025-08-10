@@ -1,0 +1,27 @@
+
+Required Libraries for ESP32 Classroom Automation:
+
+Install these libraries through Arduino IDE Library Manager:
+
+1. WiFi (Built-in ESP32 library)
+2. HTTPClient (Built-in ESP32 library) 
+3. ArduinoJson by Benoit Blanchon (Version 6.x)
+4. WebSocketsClient by Markus Sattler
+5. EEPROM (Built-in ESP32 library)
+
+Installation Steps:
+1. Open Arduino IDE
+2. Go to Tools > Manage Libraries
+3. Search for each library name
+4. Click Install on the latest version
+
+Board Configuration:
+- Board: "ESP32 Dev Module" 
+- Upload Speed: "921600"
+- CPU Frequency: "240MHz (WiFi/BT)"
+- Flash Frequency: "80MHz" 
+- Flash Mode: "QIO"
+- Flash Size: "4MB (32Mb)"
+- Partition Scheme: "Default 4MB with spiffs (1.2MB APP/1.5MB SPIFFS)"
+- Core Debug Level: "None"
+- PSRAM: "Disabled"

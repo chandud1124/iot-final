@@ -1,0 +1,34 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/cores/esp32",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/tools/sdk/esp32/include",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/variants/esp32",
+                "~/Documents/Arduino/libraries/ArduinoJson/src",
+                "~/Documents/Arduino/libraries/WebSockets/src",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/libraries/**",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/tools/sdk/esp32/include/freertos/include",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/tools/sdk/esp32/include/freertos/include/esp_additions/freertos",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/tools/sdk/esp32/include/esp_common/include",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/tools/sdk/esp32/include/esp_system/include",
+                "~/Library/Arduino15/packages/esp32/hardware/esp32/3.3.0/tools/sdk/esp32/include/esp_hw_support/include"
+            ],
+            "defines": [
+                "ARDUINO=100",
+                "ARDUINO_ARCH_ESP32=1",
+                "ARDUINO_VARIANT=\"esp32\"",
+                "ESP32=1",
+                "ESP_PLATFORM=1"
+            ],
+            "macFrameworkPath": [],
+            "compilerPath": "~/Library/Arduino15/packages/esp32/tools/xtensa-esp32-elf-gcc/gcc8_4_0-esp-2021r2-patch3/bin/xtensa-esp32-elf-g++",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "gcc-x64"
+        }
+    ],
+    "version": 4
+}
