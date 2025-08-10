@@ -255,6 +255,23 @@ const toggleSwitch = async (req, res) => {
       return res.status(404).json({ message: 'Device not found' });
     }
 
+    // Block toggle if device is offline to ensure consistency with UI
+    if (device.status && device.status !== 'online') {
+      // Emit socket event notifying clients the toggle was blocked
+      try {
+        req.app.get('io').emit('device_toggle_blocked', {
+          deviceId,
+          switchId,
+          reason: 'offline',
+          requestedState: state,
+          timestamp: Date.now()
+        });
+      } catch (e) {
+        if (process.env.NODE_ENV !== 'production') console.warn('[emit device_toggle_blocked failed]', e.message);
+      }
+      return res.status(409).json({ message: 'Device is offline. Cannot toggle switches.' });
+    }
+
     const switchIndex = device.switches.findIndex(sw => sw._id.toString() === switchId);
     if (switchIndex === -1) {
       return res.status(404).json({ message: 'Switch not found' });

@@ -13,6 +13,8 @@ export const useDevices = () => {
   // configurable stale time (ms)
   const STALE_MS = 15_000; // 15s cache window
   const [error, setError] = useState<string | null>(null);
+  // Queue for toggle intents when device offline
+  const [toggleQueue, setToggleQueue] = useState<Array<{ deviceId: string; switchId: string; desiredState?: boolean; timestamp: number }>>([]);
 
   const handleDeviceStateChanged = useCallback((data: { deviceId: string; state: Device }) => {
     setDevices(prev => prev.map(device => 
@@ -54,11 +56,38 @@ export const useDevices = () => {
     // Set up socket listeners
     socketService.onDeviceStateChanged(handleDeviceStateChanged);
     socketService.onDevicePirTriggered(handleDevicePirTriggered);
+    // When a device reconnects, flush queued toggles for it
+    const handleConnected = (data: { deviceId: string }) => {
+      setToggleQueue(prev => prev); // trigger state reference
+      const toProcess = toggleQueue.filter(t => t.deviceId === data.deviceId);
+      if (toProcess.length) {
+        // Process sequentially to maintain order
+        (async () => {
+          for (const intent of toProcess) {
+            try {
+              await toggleSwitch(intent.deviceId, intent.switchId);
+            } catch (e) {
+              console.warn('Failed to flush queued toggle', intent, e);
+            }
+          }
+          // Remove processed intents
+          setToggleQueue(prev => prev.filter(t => t.deviceId !== data.deviceId));
+        })();
+      }
+    };
+    socketService.onDeviceConnected(handleConnected);
+    const handleToggleBlocked = (payload: any) => {
+      // Could surface toast/alert here if needed
+      console.info('Toggle blocked (server):', payload);
+    };
+    (socketService as any).onDeviceToggleBlocked?.(handleToggleBlocked);
 
     return () => {
       // Clean up socket listeners
       socketService.off('device_state_changed', handleDeviceStateChanged);
       socketService.off('device_pir_triggered', handleDevicePirTriggered);
+      socketService.off('device_connected', handleConnected);
+      socketService.off('device_toggle_blocked', handleToggleBlocked);
     };
   }, [handleDeviceStateChanged, handleDevicePirTriggered]);
 
@@ -91,6 +120,17 @@ export const useDevices = () => {
   };
 
   const toggleSwitch = async (deviceId: string, switchId: string) => {
+    // Prevent toggling if device currently marked offline
+    const target = devices.find(d => d.id === deviceId);
+    if (target && target.status !== 'online') {
+      console.warn(`Queued toggle: device ${deviceId} is offline`);
+      // Add to queue (avoid duplicates for same switch keeping latest desiredState)
+      setToggleQueue(prev => {
+        const others = prev.filter(t => !(t.deviceId === deviceId && t.switchId === switchId));
+        return [...others, { deviceId, switchId, desiredState: undefined, timestamp: Date.now() }];
+      });
+      throw new Error('Device is offline. Toggle queued.');
+    }
     try {
       const response = await deviceAPI.toggleSwitch(deviceId, switchId);
       

@@ -80,6 +80,10 @@ class SocketService {
     this.on('device_disconnected', callback);
   }
 
+  public onDeviceToggleBlocked(callback: (data: { deviceId: string; switchId: string; reason: string; requestedState?: boolean; timestamp: number }) => void) {
+    this.on('device_toggle_blocked', callback);
+  }
+
   // Send command to device
   public sendDeviceCommand(deviceId: string, command: any) {
     this.emit('device_command', { deviceId, command });

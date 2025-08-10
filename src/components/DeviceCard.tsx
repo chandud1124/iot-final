@@ -80,14 +80,15 @@ export default function DeviceCard({ device, onToggleSwitch, onUpdateDevice, onD
 
           {/* Switches */}
           <div className="grid gap-2">
-      {device.switches.map((switch_, i) => (
-              <SwitchControl
-        key={switch_.id || (switch_ as any)._id || `${switch_.name}-${(switch_ as any).gpio || (switch_ as any).relayGpio || i}`}
-                switch={switch_}
-                onToggle={() => onToggleSwitch(device.id, switch_.id)}
-                isPirActive={switch_.usePir && device.pirEnabled}
-              />
-            ))}
+          {device.switches.map((switch_, i) => (
+                  <SwitchControl
+            key={switch_.id || (switch_ as any)._id || `${switch_.name}-${(switch_ as any).gpio || (switch_ as any).relayGpio || i}`}
+                    switch={switch_}
+                    onToggle={() => onToggleSwitch(device.id, switch_.id)}
+                    disabled={device.status !== 'online'}
+                    isPirActive={switch_.usePir && device.pirEnabled}
+                  />
+                ))}
           </div>
 
           {/* PIR Sensor Info */}
