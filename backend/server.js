@@ -262,11 +262,11 @@ wss.on('connection', (ws) => {
     let data;
     try { data = JSON.parse(msg.toString()); } catch { return; }
     const type = data.type;
-    if (type === 'identify') {
+    if (type === 'identify' || type === 'authenticate') {
       const mac = (data.mac || data.macAddress || '').toUpperCase();
       const secret = data.secret || data.signature;
-      if (!mac || !secret) {
-        ws.send(JSON.stringify({ type:'error', reason:'missing_mac_or_secret' }));
+      if (!mac) {
+        ws.send(JSON.stringify({ type:'error', reason:'missing_mac' }));
         return;
       }
       try {
@@ -274,20 +274,21 @@ wss.on('connection', (ws) => {
         // fetch secret field explicitly
         const device = await Device.findOne({ macAddress: mac }).select('+deviceSecret switches macAddress');
         if (!device || !device.deviceSecret) {
-          ws.send(JSON.stringify({ type:'error', reason:'device_not_registered' }));
-          return;
-        }
-        // Simple shared secret comparison (can extend to HMAC later)
-        if (device.deviceSecret !== secret) {
-          ws.send(JSON.stringify({ type:'error', reason:'invalid_secret' }));
-          return;
+          // If deviceSecret not set, allow temporary identification without secret
+          if (!device) {
+            ws.send(JSON.stringify({ type:'error', reason:'device_not_registered' }));
+            return;
+          }
+        } else if (!secret || device.deviceSecret !== secret) {
+          ws.send(JSON.stringify({ type:'error', reason:'invalid_or_missing_secret' }));
+          return;        
         }
         ws.mac = mac;
         wsDevices.set(mac, ws);
         device.status = 'online';
         device.lastSeen = new Date();
         await device.save();
-        ws.send(JSON.stringify({ type: 'identified', mac }));
+        ws.send(JSON.stringify({ type: 'identified', mac, mode: device.deviceSecret ? 'secure' : 'insecure' }));
         logger.info(`[esp32] identified ${mac}`);
       } catch (e) {
         logger.error('[identify] error', e.message);
