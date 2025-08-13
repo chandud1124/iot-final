@@ -25,14 +25,9 @@
 #ifndef DISABLE_HMAC
 #include <mbedtls/md.h>
 #endif
-
-#define WIFI_SSID "I am Not A Witch I am Your Wifi"
-#define WIFI_PASSWORD "Whoareu@0000"
-#define BACKEND_HOST "192.168.0.108"  // backend LAN IP
-#define BACKEND_PORT 3001
-#define WS_PATH "/esp32-ws"
+#include <vector>
 #define HEARTBEAT_MS 30000UL          // 30s heartbeat interval
-#define DEVICE_SECRET "798f527ea312858e6a6f829b7a140eee192ac4a45c0f815c" // device secret from backend
+#define DEVICE_SECRET "87cf1b5017a8486106a9a234d149f7ddfdf56f7b648af688" // device secret from backend
 
 // Optional status LED (set to 255 to disable if your board lacks LED_BUILTIN)
 #ifndef STATUS_LED_PIN
@@ -40,7 +35,7 @@
 #endif
 
 // Debounce multiple rapid local state changes into one state_update
-#define STATE_DEBOUNCE_MS 200
+#define STATE_DEBOUNCE_MS 120
 
 // Active-low mapping: logical ON -> LOW, OFF -> HIGH (common relay boards)
 
@@ -69,8 +64,9 @@ struct SwitchState {
 #define MANUAL_DEBOUNCE_MS 30
 // Treat a falling edge (HIGH->LOW) on a pullup input as a toggle event
 #define MANUAL_ACTIVE_LOW 1
-#include <vector>
+#define MANUAL_DBG_INTERVAL_MS 2000UL
 std::vector<SwitchState> switchesLocal; // dynamically populated
+static unsigned long lastManualDbg = 0;
 
 // -----------------------------------------------------------------------------
 // Utility helpers
@@ -155,7 +151,7 @@ bool applySwitchState(int gpio, bool state) {
       pinMode(sw.gpio, OUTPUT);
   digitalWrite(sw.gpio, state ? LOW : HIGH);
   Serial.printf("[SWITCH] GPIO %d -> %s (active-low)\n", sw.gpio, state ? "ON":"OFF");
-      sendStateUpdate(true); // immediate broadcast
+  sendStateUpdate(); // coalesce rapid changes; flush after debounce
       return true;
     }
   }
@@ -164,14 +160,20 @@ bool applySwitchState(int gpio, bool state) {
 }
 
 void loadConfigFromJsonArray(JsonArray arr) {
+  // Preserve previous GPIO states so we don't override hardware on reconnect
+  std::vector<SwitchState> prev = switchesLocal; // shallow copy is fine (we use gpio/state)
   switchesLocal.clear();
+  // First pass: build new switch list and configure I/O modes
   for (JsonObject o : arr) {
     int g = o["relayGpio"].is<int>() ? o["relayGpio"].as<int>() : (o["gpio"].is<int>() ? o["gpio"].as<int>() : -1);
     if (g < 0) continue;
-    bool desiredState = o["state"].is<bool>() ? o["state"].as<bool>() : false; // default OFF logically
+    bool desiredState = o["state"].is<bool>() ? o["state"].as<bool>() : false; // DB-intended, used only if no prior state
     SwitchState sw { };
     sw.gpio = g;
-    sw.state = desiredState;
+    // Prefer the previous (hardware) state if we already had this GPIO configured
+    bool hasPrev = false; bool prevState = false;
+    for (auto &p : prev) { if (p.gpio == g) { hasPrev = true; prevState = p.state; break; } }
+    sw.state = hasPrev ? prevState : desiredState;
     sw.name = String(o["name"].is<const char*>() ? o["name"].as<const char*>() : "");
     // Manual switch config (optional)
     if (o["manualSwitchEnabled"].is<bool>() && o["manualSwitchEnabled"].as<bool>() && o["manualSwitchGpio"].is<int>()) {
@@ -186,8 +188,7 @@ void loadConfigFromJsonArray(JsonArray arr) {
         sw.manualActiveLow = o["manualActiveLow"].as<bool>();
       }
     }
-    pinMode(g, OUTPUT);
-  digitalWrite(g, desiredState ? LOW : HIGH);
+  pinMode(g, OUTPUT);
     if (sw.manualEnabled && sw.manualGpio >= 0) {
       // Configure input with proper pull depending on polarity.
       // NOTE: GPIOs 34-39 are input-only and DO NOT support internal pull-up/down.
@@ -202,6 +203,10 @@ void loadConfigFromJsonArray(JsonArray arr) {
         } else {
           // Many ESP32 pins support internal pulldown; if not available, add external pulldown
           pinMode(sw.manualGpio, INPUT_PULLDOWN);
+          // Heuristic warning for common pins where pulldown may be unreliable without external resistor
+          if (sw.manualGpio == 32 || sw.manualGpio == 33) {
+            Serial.printf("[MANUAL][WARN] gpio=%d pulldown may not be available on all boards. If readings float, add external pulldown to GND or switch to manualActiveLow=true wiring.\n", sw.manualGpio);
+          }
         }
       }
       sw.lastManualLevel = digitalRead(sw.manualGpio);
@@ -216,6 +221,14 @@ void loadConfigFromJsonArray(JsonArray arr) {
     switchesLocal.push_back(sw);
   }
   Serial.printf("[CONFIG] Loaded %u switches\n", (unsigned)switchesLocal.size());
+  // Second pass: apply relay states, optionally staggering to avoid dip resets
+  for (size_t i = 0; i < switchesLocal.size(); ++i) {
+    auto &sw = switchesLocal[i];
+    digitalWrite(sw.gpio, sw.state ? LOW : HIGH);
+    if (STAGGER_ON_CONFIG && i + 1 < switchesLocal.size()) {
+      delay(STAGGER_RELAY_APPLY_MS);
+    }
+  }
   // Snapshot print for verification
   for (auto &sw : switchesLocal) {
     Serial.printf("[SNAPSHOT] gpio=%d state=%s manual=%s manualGpio=%d mode=%s activeLow=%d\n",
@@ -338,6 +351,30 @@ void setupRelays() {
   // If you want fallback default pins, push_back them here.
   if (switchesLocal.empty()) {
     Serial.println(F("[INIT] No local switches yet (waiting for identified/config_update)"));
+    #if ENABLE_OFFLINE_FALLBACK
+      // Configure a single fallback switch so manual works before WS/config
+      SwitchState sw{};
+      sw.gpio = FALLBACK_RELAY_GPIO;
+      sw.state = false; // default OFF
+      sw.name = String("fallback");
+      sw.manualEnabled = true;
+      sw.manualGpio = FALLBACK_MANUAL_GPIO;
+      sw.manualActiveLow = (FALLBACK_MANUAL_ACTIVE_LOW != 0);
+      sw.manualMomentary = (FALLBACK_MANUAL_MOMENTARY != 0);
+      pinMode(sw.gpio, OUTPUT);
+      digitalWrite(sw.gpio, HIGH); // OFF (active-low)
+      if (sw.manualGpio >= 34 && sw.manualGpio <= 39) {
+        pinMode(sw.manualGpio, INPUT);
+      } else {
+        pinMode(sw.manualGpio, sw.manualActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+      }
+      sw.lastManualLevel = digitalRead(sw.manualGpio);
+      sw.stableManualLevel = sw.lastManualLevel;
+      sw.lastManualActive = sw.manualActiveLow ? (sw.stableManualLevel == LOW) : (sw.stableManualLevel == HIGH);
+      switchesLocal.push_back(sw);
+      Serial.printf("[INIT] Offline fallback enabled: relay=%d manual=%d activeLow=%d mode=%s\n",
+        sw.gpio, sw.manualGpio, sw.manualActiveLow?1:0, sw.manualMomentary?"momentary":"maintained");
+    #endif
   } else {
     for (auto &sw : switchesLocal) {
       pinMode(sw.gpio, OUTPUT);
@@ -348,7 +385,7 @@ void setupRelays() {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(SERIAL_BAUD_RATE);
   // EEPROM init and optional clear on version bump
   EEPROM.begin(EEPROM_SIZE);
   const int verAddr = 0;
@@ -365,7 +402,7 @@ void setup() {
   Serial.println("\nWiFi OK");
   setupRelays(); // safe: does nothing until config arrives
   if (STATUS_LED_PIN != 255) { pinMode(STATUS_LED_PIN, OUTPUT); digitalWrite(STATUS_LED_PIN, LOW); }
-  ws.begin(BACKEND_HOST, BACKEND_PORT, WS_PATH);
+  ws.begin(WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(5000); // base interval; library uses backoff internally
   // Additional optional manual backoff example (uncomment to customize):
@@ -430,6 +467,19 @@ void loop() {
   }
   if (anyManualToggled) {
     // applySwitchState already sends an immediate state_update(true)
+  }
+  // Periodic manual-input debug to verify wiring and signal levels
+  if (millis() - lastManualDbg > MANUAL_DBG_INTERVAL_MS) {
+    lastManualDbg = millis();
+    for (auto &sw : switchesLocal) {
+      if (!sw.manualEnabled || sw.manualGpio < 0) continue;
+      int raw = digitalRead(sw.manualGpio);
+      bool logicalActive = sw.manualActiveLow ? (raw == LOW) : (raw == HIGH);
+      Serial.printf("[MANUAL][DBG] relayGPIO=%d input=%d raw=%d logicalActive=%d mode=%s state=%s\n",
+                    sw.gpio, sw.manualGpio, raw, logicalActive?1:0,
+                    sw.manualMomentary?"momentary":"maintained",
+                    sw.state?"ON":"OFF");
+    }
   }
   delay(10);
 }

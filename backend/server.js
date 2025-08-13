@@ -442,16 +442,33 @@ wss.on('connection', (ws) => {
         if (process.env.NODE_ENV !== 'production') {
           console.log('[identify] device marked online', { mac, lastSeen: device.lastSeen.toISOString() });
         }
-        // Flush any queued intents
+        // Flush any queued intents AFTER firmware likely sends a state_update,
+        // so we don't override manual/hardware changes made while offline.
         if (Array.isArray(device.queuedIntents) && device.queuedIntents.length) {
-          for (const intent of device.queuedIntents) {
+          setTimeout(async () => {
             try {
-              const payload = { type: 'switch_command', mac, gpio: intent.switchGpio, state: intent.desiredState };
-              ws.send(JSON.stringify(payload));
-            } catch (e) { /* ignore individual failures */ }
-          }
-          device.queuedIntents = [];
-          await device.save();
+              const Device = require('./models/Device');
+              const fresh = await Device.findOne({ macAddress: mac });
+              if (!fresh || !Array.isArray(fresh.switches)) return;
+              const intents = Array.isArray(fresh.queuedIntents) ? fresh.queuedIntents : [];
+              const toSend = [];
+              for (const intent of intents) {
+                const sw = fresh.switches.find(s => (s.relayGpio || s.gpio) === intent.switchGpio);
+                // Only send if desired differs from CURRENT DB state (likely updated by state_update)
+                if (!sw || sw.state === intent.desiredState) {
+                  continue; // skip: already in desired state
+                }
+                toSend.push({ gpio: intent.switchGpio, state: intent.desiredState });
+              }
+              // Send remaining intents
+              for (const cmd of toSend) {
+                try { ws.send(JSON.stringify({ type:'switch_command', mac, gpio: cmd.gpio, state: cmd.state })); } catch {}
+              }
+              // Clear all intents regardless; future discrepancies will reconcile via switch_result/state_update
+              fresh.queuedIntents = [];
+              await fresh.save();
+            } catch (e) { /* ignore flush errors */ }
+          }, 600); // small delay to allow initial state_update to arrive first
         }
         // Build minimal switch config (exclude sensitive/internal fields)
         const switchConfig = Array.isArray(device.switches) ? device.switches.map(sw => ({
@@ -472,7 +489,7 @@ wss.on('connection', (ws) => {
         }));
         // Immediately send a full config_update so firmware can apply current states and GPIO mapping
         try {
-          const cfgMsg = {
+      const cfgMsg = {
             type: 'config_update',
             mac,
             switches: device.switches.map((sw, idx) => ({
@@ -484,13 +501,16 @@ wss.on('connection', (ws) => {
               manualSwitchEnabled: sw.manualSwitchEnabled,
               manualMode: sw.manualMode,
               manualActiveLow: sw.manualActiveLow,
-              state: sw.state
+        // Send intended DB state, but firmware preserves its last known hardware state on reconnect
+        state: sw.state
             })),
             pirEnabled: device.pirEnabled,
             pirGpio: device.pirGpio,
             pirAutoOffDelay: device.pirAutoOffDelay
           };
           ws.send(JSON.stringify(cfgMsg));
+      // Immediately ask firmware to echo its current states by sending a tiny nudge (optional)
+      try { ws.send(JSON.stringify({ type:'heartbeat', mac })); } catch {}
         } catch (e) {
           logger.warn('[identify] failed to send config_update', e.message);
         }
@@ -519,14 +539,16 @@ wss.on('connection', (ws) => {
       return;
     }
   if (type === 'state_update') {
-      // basic rate limit: max 5 per 5s per device
+      // Relaxed rate limiting: accept up to ~10 updates per 2s; prefer newest
       const now = Date.now();
       if (!ws._stateRL) ws._stateRL = [];
-      ws._stateRL = ws._stateRL.filter(t => now - t < 5000);
-      if (ws._stateRL.length >= 5) {
-        return; // drop silently
+      ws._stateRL = ws._stateRL.filter(t => now - t < 2000);
+      if (ws._stateRL.length >= 10) {
+        // If too chatty, drop but allow the newest to pass by resetting window
+        ws._stateRL = [ now ];
+      } else {
+        ws._stateRL.push(now);
       }
-      ws._stateRL.push(now);
       // Optional HMAC verification
       try {
         if (process.env.REQUIRE_HMAC_IN === '1' && ws.secret) {
@@ -629,7 +651,7 @@ wss.on('connection', (ws) => {
               logger.debug('[switch_result] stale_seq drop', { mac: ws.mac, gpio, requested });
             } catch {}
             // Still forward a lightweight switch_result so UI can optionally refresh
-            io.emit('switch_result', { deviceId: device.id, gpio, requestedState: requested, actualState: actual, success: false, reason, ts: Date.now() });
+            io.emit('switch_result', { deviceId: device.id, gpio, requestedState: requested, actualState: actual, success: false, reason, ts: Date.now(), seq: incomingSeq });
             return;
           }
 
@@ -642,9 +664,9 @@ wss.on('connection', (ws) => {
             emitDeviceStateChanged(device, { source: 'esp32:switch_result:failure', note: reason });
           }
           // Notify UI about blocked toggle AFTER reconciliation so state matches hardware
-          io.emit('device_toggle_blocked', { deviceId: device.id, switchGpio: gpio, reason, requestedState: requested, actualState: actual, timestamp: Date.now() });
+          io.emit('device_toggle_blocked', { deviceId: device.id, switchGpio: gpio, reason, requestedState: requested, actualState: actual, timestamp: Date.now(), seq: incomingSeq });
           // Emit dedicated switch_result event for precise UI reconciliation (failure)
-          io.emit('switch_result', { deviceId: device.id, gpio, requestedState: requested, actualState: actual, success: false, reason, ts: Date.now() });
+          io.emit('switch_result', { deviceId: device.id, gpio, requestedState: requested, actualState: actual, success: false, reason, ts: Date.now(), seq: incomingSeq });
           return;
         }
         // Success path: if backend DB state mismatches actual, reconcile and broadcast
@@ -655,7 +677,7 @@ wss.on('connection', (ws) => {
           emitDeviceStateChanged(device, { source: 'esp32:switch_result:success:reconcile' });
         }
         // Always emit switch_result for UI even if no DB change (authoritative confirmation)
-        io.emit('switch_result', { deviceId: device.id, gpio, requestedState: requested, actualState: actual !== undefined ? actual : (target ? target.state : undefined), success: true, ts: Date.now() });
+  io.emit('switch_result', { deviceId: device.id, gpio, requestedState: requested, actualState: actual !== undefined ? actual : (target ? target.state : undefined), success: true, ts: Date.now(), seq: incomingSeq });
       } catch (e) {
         logger.error('[switch_result handling] error', e.message);
       }
