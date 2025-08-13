@@ -557,12 +557,13 @@ wss.on('connection', (ws) => {
         if (!device) return;
         const incoming = Array.isArray(data.switches) ? data.switches : [];
         let changed = false;
-        const validGpios = new Set(device.switches.map(sw => sw.gpio || sw.relayGpio));
+        // IMPORTANT: use nullish coalescing so GPIO=0 is treated as a valid value
+        const validGpios = new Set(device.switches.map(sw => (sw.relayGpio ?? sw.gpio)));
         incoming.forEach(swIn => {
           const gpio = swIn.gpio ?? swIn.relayGpio;
           if (gpio === undefined) return;
           if (!validGpios.has(gpio)) return; // ignore unknown gpio
-          const target = device.switches.find(sw => (sw.gpio || sw.relayGpio) === gpio);
+          const target = device.switches.find(sw => ((sw.relayGpio ?? sw.gpio) === gpio));
           if (target && target.state !== swIn.state) {
             target.state = !!swIn.state;
             target.lastStateChange = new Date();
@@ -614,11 +615,11 @@ wss.on('connection', (ws) => {
         const Device = require('./models/Device');
         const device = await Device.findOne({ macAddress: ws.mac });
         if (!device) return;
-        const gpio = data.gpio;
+  const gpio = data.gpio;
         const success = !!data.success;
         const requested = !!data.requestedState;
         const actual = data.actualState !== undefined ? !!data.actualState : undefined;
-        const target = device.switches.find(sw => (sw.gpio || sw.relayGpio) === gpio);
+  const target = device.switches.find(sw => ((sw.relayGpio ?? sw.gpio) === gpio));
         if (!success) {
           const reason = data.reason || 'unknown_gpio';
           // Treat stale_seq as a harmless, idempotent drop (usually after server restart)
