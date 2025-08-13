@@ -487,33 +487,8 @@ wss.on('connection', (ws) => {
             mode: device.deviceSecret ? 'secure' : 'insecure',
             switches: switchConfig
         }));
-        // Immediately send a full config_update so firmware can apply current states and GPIO mapping
-        try {
-      const cfgMsg = {
-            type: 'config_update',
-            mac,
-            switches: device.switches.map((sw, idx) => ({
-              order: idx,
-              gpio: sw.gpio,
-              relayGpio: sw.relayGpio,
-              name: sw.name,
-              manualSwitchGpio: sw.manualSwitchGpio,
-              manualSwitchEnabled: sw.manualSwitchEnabled,
-              manualMode: sw.manualMode,
-              manualActiveLow: sw.manualActiveLow,
-        // Send intended DB state, but firmware preserves its last known hardware state on reconnect
-        state: sw.state
-            })),
-            pirEnabled: device.pirEnabled,
-            pirGpio: device.pirGpio,
-            pirAutoOffDelay: device.pirAutoOffDelay
-          };
-          ws.send(JSON.stringify(cfgMsg));
-      // Immediately ask firmware to echo its current states by sending a tiny nudge (optional)
-      try { ws.send(JSON.stringify({ type:'heartbeat', mac })); } catch {}
-        } catch (e) {
-          logger.warn('[identify] failed to send config_update', e.message);
-        }
+        // Do not spam immediate config_update; identified already carries switches.
+        // Firmware preserves prior states and emits a state_update after applying if needed.
         logger.info(`[esp32] identified ${mac}`);
   // Notify frontend clients for immediate UI updates / queued toggle flush
   try { io.emit('device_connected', { deviceId: device.id, mac }); } catch {}

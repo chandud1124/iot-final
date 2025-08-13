@@ -163,6 +163,10 @@ void loadConfigFromJsonArray(JsonArray arr) {
   // Preserve previous GPIO states so we don't override hardware on reconnect
   std::vector<SwitchState> prev = switchesLocal; // shallow copy is fine (we use gpio/state)
   switchesLocal.clear();
+  auto findPrev = [&](int g, bool &out) -> bool {
+    for (auto &p : prev) { if (p.gpio == g) { out = p.state; return true; } }
+    return false;
+  };
   // First pass: build new switch list and configure I/O modes
   for (JsonObject o : arr) {
     int g = o["relayGpio"].is<int>() ? o["relayGpio"].as<int>() : (o["gpio"].is<int>() ? o["gpio"].as<int>() : -1);
@@ -171,8 +175,8 @@ void loadConfigFromJsonArray(JsonArray arr) {
     SwitchState sw { };
     sw.gpio = g;
     // Prefer the previous (hardware) state if we already had this GPIO configured
-    bool hasPrev = false; bool prevState = false;
-    for (auto &p : prev) { if (p.gpio == g) { hasPrev = true; prevState = p.state; break; } }
+  bool hasPrev = false; bool prevState = false;
+  hasPrev = findPrev(g, prevState);
     sw.state = hasPrev ? prevState : desiredState;
     sw.name = String(o["name"].is<const char*>() ? o["name"].as<const char*>() : "");
     // Manual switch config (optional)
@@ -221,12 +225,19 @@ void loadConfigFromJsonArray(JsonArray arr) {
     switchesLocal.push_back(sw);
   }
   Serial.printf("[CONFIG] Loaded %u switches\n", (unsigned)switchesLocal.size());
-  // Second pass: apply relay states, optionally staggering to avoid dip resets
+  // Second pass: apply relay states only if changed vs previous snapshot
+  bool anyApplied = false;
   for (size_t i = 0; i < switchesLocal.size(); ++i) {
     auto &sw = switchesLocal[i];
-    digitalWrite(sw.gpio, sw.state ? LOW : HIGH);
-    if (STAGGER_ON_CONFIG && i + 1 < switchesLocal.size()) {
-      delay(STAGGER_RELAY_APPLY_MS);
+    bool prevState = false; bool hadPrev = findPrev(sw.gpio, prevState);
+    if (!hadPrev || prevState != sw.state) {
+      digitalWrite(sw.gpio, sw.state ? LOW : HIGH);
+      anyApplied = true;
+      if (STAGGER_ON_CONFIG && i + 1 < switchesLocal.size()) {
+        delay(STAGGER_RELAY_APPLY_MS);
+      }
+    } else {
+      // No hardware change needed; keep existing level
     }
   }
   // Snapshot print for verification
@@ -235,7 +246,7 @@ void loadConfigFromJsonArray(JsonArray arr) {
                   sw.gpio, sw.state?"ON":"OFF", sw.manualEnabled?"yes":"no", sw.manualGpio,
                   sw.manualMomentary?"momentary":"maintained", sw.manualActiveLow?1:0);
   }
-  sendStateUpdate(true);
+  if (anyApplied) sendStateUpdate(true);
 }
 
 void onWsEvent(WStype_t type, uint8_t * payload, size_t len) {

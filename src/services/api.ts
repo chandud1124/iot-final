@@ -1,8 +1,25 @@
 
 import axios from 'axios';
 
-// Default backend port adjusted to 3001 (previous fallback 30011 caused connection errors)
-const RAW_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+// Prefer VITE_API_URL, fallback to VITE_API_BASE_URL; avoid hardcoded localhost where possible
+const FROM_ENV = (import.meta.env as any).VITE_API_URL || (import.meta.env as any).VITE_API_BASE_URL || '';
+let RAW_API_BASE_URL = FROM_ENV;
+// If not provided, derive from current window origin (useful in prod); as last resort, keep localhost for dev only
+if (!RAW_API_BASE_URL) {
+  try {
+    const origin = window?.location?.origin;
+    if (origin && !/localhost|127\.0\.0\.1/.test(origin)) {
+      RAW_API_BASE_URL = origin.replace(/\/+$/, '') + '/api';
+    }
+  } catch { /* ignore */ }
+}
+if (!RAW_API_BASE_URL) {
+  RAW_API_BASE_URL = 'http://localhost:3001/api';
+}
+// Ensure the base ends with /api for REST calls defined with relative paths
+if (!/\/api\/?$/.test(RAW_API_BASE_URL)) {
+  RAW_API_BASE_URL = RAW_API_BASE_URL.replace(/\/+$/, '') + '/api';
+}
 // Safety: if environment still points to deprecated port 30011, transparently switch to 3001
 const API_BASE_URL = RAW_API_BASE_URL.includes('30011')
   ? RAW_API_BASE_URL.replace('30011', '3001')

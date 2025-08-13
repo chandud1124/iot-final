@@ -1,9 +1,39 @@
 
 // Environment configuration
 export const config = {
-  // API Configuration (normalized to 3001 default)
-  apiBaseUrl: import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001',
-  websocketUrl: import.meta.env.VITE_WEBSOCKET_URL || 'ws://localhost:3001',
+  // API Configuration
+  // Prefer VITE_API_URL; if absent, derive from current origin (prod) or localhost in dev.
+  apiBaseUrl: (() => {
+    const fromEnv = (import.meta.env as any).VITE_API_URL || (import.meta.env as any).VITE_API_BASE_URL || '';
+    let url = fromEnv;
+    if (!url) {
+      try {
+        const origin = window?.location?.origin;
+        if (origin && !/localhost|127\.0\.0\.1/.test(origin)) {
+          url = origin;
+        }
+      } catch { /* ignore */ }
+    }
+    if (!url) url = 'http://localhost:3001';
+    // Ensure trailing /api for REST base
+    if (!/\/api\/?$/.test(url)) url = url.replace(/\/+$/, '') + '/api';
+    return url;
+  })(),
+  websocketUrl: (() => {
+    // Explicit override if provided
+    const wsEnv = (import.meta.env as any).VITE_WEBSOCKET_URL;
+    if (wsEnv) return wsEnv;
+    // Derive from apiBaseUrl by stripping /api
+    try {
+      const httpBase = (import.meta.env as any).VITE_API_URL || (import.meta.env as any).VITE_API_BASE_URL || '';
+      let base = httpBase || window?.location?.origin || 'http://localhost:3001';
+      base = base.replace(/\/+$/, '').replace(/\/api$/, '');
+      // Normalize protocol to ws/wss
+      if (base.startsWith('https://')) return 'wss://' + base.slice('https://'.length);
+      if (base.startsWith('http://')) return 'ws://' + base.slice('http://'.length);
+      return base;
+    } catch { return 'ws://localhost:3001'; }
+  })(),
   
   // Application Settings
   appName: import.meta.env.VITE_APP_NAME || 'IoT College Automation',

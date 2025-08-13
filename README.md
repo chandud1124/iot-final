@@ -109,7 +109,8 @@ A modern IoT building management system enabling real-time device control, sched
 
    Create `.env` file in root directory:
    ```env
-   VITE_API_BASE_URL=http://localhost:3001/api
+   # Prefer single var for both REST and Socket.IO base (include /api)
+   VITE_API_URL=http://localhost:3001/api
    ```
 
 ## 🔐 Security Features
@@ -299,7 +300,7 @@ npm run dev
 
 ### Frontend Environment (.env)
 ```env
-VITE_API_BASE_URL=http://localhost:3001/api
+VITE_API_URL=http://localhost:3001/api
 ```
 
 ### Backend Environment (.env)

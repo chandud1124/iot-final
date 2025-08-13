@@ -6,8 +6,14 @@ const User = require('../models/User');
 // You need to set these up in your Google Cloud Console
 const CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-// Ensure redirect URI matches backend port & route actually exposed
-const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3001/api/google-calendar/callback';
+// Ensure redirect URI matches backend port & route actually exposed.
+// Prefer env; if missing, derive from request origin/host at runtime.
+const getRedirectUri = (req) => {
+  if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI;
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http');
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}/api/google-calendar/callback`;
+};
 
 const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
 
@@ -24,7 +30,7 @@ exports.getAuthUrl = (req, res) => {
       message: 'Add GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI to backend/.env then restart server.'
     });
   }
-  const oAuth2Client = new OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  const oAuth2Client = new OAuth2(CLIENT_ID, CLIENT_SECRET, getRedirectUri(req));
   const url = oAuth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: SCOPES,
@@ -39,7 +45,7 @@ exports.getAuthUrl = (req, res) => {
 exports.handleCallback = async (req, res) => {
   const code = req.query.code;
   if (!code) return res.status(400).json({ error: 'Missing code parameter' });
-  const oAuth2Client = new OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  const oAuth2Client = new OAuth2(CLIENT_ID, CLIENT_SECRET, getRedirectUri(req));
   try {
     const { tokens } = await oAuth2Client.getToken(code);
     oAuth2Client.setCredentials(tokens);
@@ -95,7 +101,7 @@ exports.getStatus = async (req, res) => {
     obtainedAt: t?.obtainedAt,
     expiresIn: t?.expiry_date ? Math.max(0, Math.floor((t.expiry_date - Date.now()) / 1000)) : null,
     hasRefreshToken: !!t?.refresh_token,
-    redirectURI: REDIRECT_URI
+  redirectURI: getRedirectUri(req)
   });
 };
 

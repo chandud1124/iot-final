@@ -6,13 +6,27 @@ class SocketService {
   private listeners: Map<string, Set<Function>> = new Map();
 
   constructor() {
-  const RAW_SOCKET_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+  const WS_OVERRIDE = (import.meta.env as any).VITE_WEBSOCKET_URL || '';
+  const FROM_ENV = (import.meta.env as any).VITE_API_URL || (import.meta.env as any).VITE_API_BASE_URL || '';
+    let RAW_SOCKET_URL = WS_OVERRIDE || FROM_ENV;
+    // If not provided, derive from current origin in production; otherwise fallback to localhost for dev
+    if (!RAW_SOCKET_URL) {
+      try {
+        const origin = window?.location?.origin;
+        if (origin && !/localhost|127\.0\.0\.1/.test(origin)) {
+          RAW_SOCKET_URL = origin;
+        }
+      } catch { /* ignore */ }
+    }
+    if (!RAW_SOCKET_URL) {
+      RAW_SOCKET_URL = 'http://localhost:3001';
+    }
     // If env base includes /api (used for REST), strip it for Socket.IO root namespace
     let derived = RAW_SOCKET_URL.replace(/\/$/, '');
-    if (/\/api$/.test(derived)) {
+  if (/\/api$/.test(derived)) {
       derived = derived.replace(/\/api$/, '');
     }
-    const SOCKET_URL = derived.includes('30011')
+  const SOCKET_URL = derived.includes('30011')
       ? derived.replace('30011', '3001')
       : derived;
     if (SOCKET_URL !== RAW_SOCKET_URL) {
