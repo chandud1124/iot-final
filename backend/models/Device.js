@@ -51,6 +51,15 @@ const switchSchema = new mongoose.Schema({
       },
       message: 'GPIO pins 6-11 are reserved for internal use'
     }
+  },
+  manualMode: {
+    type: String,
+    enum: ['maintained', 'momentary'],
+    default: 'maintained'
+  },
+  manualActiveLow: {
+    type: Boolean,
+    default: true
   }
 }, { timestamps: true });
 
@@ -145,6 +154,16 @@ const deviceSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }]
+  ,
+  // Store queued toggle intents when user tries while offline
+  queuedIntents: {
+    type: [new mongoose.Schema({
+      switchGpio: Number,
+      desiredState: Boolean,
+      createdAt: { type: Date, default: Date.now }
+    }, { _id: false })],
+    default: []
+  }
 }, {
   timestamps: true,
   toJSON: {

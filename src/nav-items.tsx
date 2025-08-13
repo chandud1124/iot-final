@@ -11,7 +11,7 @@ import NotFound from "./pages/NotFound";
 
 export const navItems = [
   {
-    title: "Dashboard",
+  title: "College",
     to: "/",
     icon: <Home className="h-4 w-4" />,
     page: <Index />,

@@ -84,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ className, onNavigateClose }) 
           {!collapsed && (
             <div>
               <h1 className="font-bold text-lg">IoT Control</h1>
-              <p className="text-xs text-muted-foreground">Home Automation</p>
+              <p className="text-xs text-muted-foreground">College Automation</p>
             </div>
           )}
         </div>

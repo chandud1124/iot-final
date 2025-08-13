@@ -14,6 +14,7 @@ import { Device, DeviceConfig } from '@/types';
 const Index = () => {
   const { devices, toggleSwitch, updateDevice, deleteDevice, getStats, toggleAllSwitches } = useDevices();
   const [configDevice, setConfigDevice] = useState<string | null>(null);
+  // Smooth stats with a small debounce and memoized fallback from local devices to reduce flicker
   const [stats, setStats] = useState({
     totalDevices: 0,
     onlineDevices: 0,
@@ -25,12 +26,33 @@ const Index = () => {
   const { toast } = useToast();
 
   useEffect(() => {
+    let t: any;
     const loadStats = async () => {
-      const newStats = await getStats();
-      setStats(newStats);
+      try {
+        const newStats = await getStats();
+        // Debounce apply to avoid tiny flickers when devices array is changing
+        clearTimeout(t);
+        t = setTimeout(() => setStats(newStats), 120);
+      } catch {
+        // Fall back to local computation
+        const online = devices.filter(d => d.status === 'online');
+        const totalSwitches = devices.reduce((s, d)=> s + d.switches.length, 0);
+        const activeSwitches = online.reduce((s,d)=> s + d.switches.filter(sw=>sw.state).length, 0);
+        const totalPirSensors = devices.filter(d => d.pirEnabled && d.pirGpio !== undefined && d.pirGpio !== null).length;
+        const activePirSensors = 0; // backend provides windowed PIR; keep 0 in fallback to avoid false positives
+        setStats({
+          totalDevices: devices.length,
+          onlineDevices: online.length,
+          totalSwitches,
+          activeSwitches,
+          totalPirSensors,
+          activePirSensors
+        });
+      }
     };
     loadStats();
-  }, [getStats]);
+    return () => clearTimeout(t);
+  }, [getStats, devices]);
 
   const handleToggleSwitch = async (deviceId: string, switchId: string) => {
     try {
@@ -105,7 +127,7 @@ const Index = () => {
               IoT Dashboard
             </h1>
             <p className="text-muted-foreground mt-1">
-              Control and monitor your smart home devices
+              Control and monitor your college campus devices
             </p>
           </div>
         </div>
@@ -119,13 +141,20 @@ const Index = () => {
             icon={<Cpu className="h-4 w-4" />}
             trend={stats.onlineDevices > 0 ? 'up' : undefined}
           />
-          <StatsCard
-            title="Active Switches"
-            value={stats.activeSwitches}
-            subtitle={`of ${stats.totalSwitches} total`}
-            icon={<Zap className="h-4 w-4" />}
-            trend={stats.activeSwitches > 0 ? 'up' : undefined}
-          />
+          {(() => {
+            const onlineActive = stats.activeSwitches;
+            const offlineActive = devices.filter(d => d.status !== 'online')
+              .reduce((sum, d) => sum + d.switches.filter(sw => sw.state).length, 0);
+            return (
+              <StatsCard
+                title="Active Switches"
+                value={onlineActive}
+                subtitle={`online: ${onlineActive} / total: ${stats.totalSwitches}${offlineActive ? ` (+${offlineActive} offline last-known on)` : ''}`}
+                icon={<Zap className="h-4 w-4" />}
+                trend={onlineActive > 0 ? 'up' : undefined}
+              />
+            );
+          })()}
           <StatsCard
             title="PIR Sensors"
             value={stats.totalPirSensors}
@@ -144,9 +173,10 @@ const Index = () => {
         {/* Master Switch */}
         <MasterSwitchCard
           totalSwitches={stats.totalSwitches}
-            activeSwitches={stats.activeSwitches}
-            offlineDevices={devices.filter(d => d.status !== 'online').length}
-            onMasterToggle={handleMasterToggle}
+          activeSwitches={stats.activeSwitches}
+          offlineDevices={devices.filter(d => d.status !== 'online').length}
+          onMasterToggle={handleMasterToggle}
+          isBusy={false}
         />
 
         {/* Devices */}
@@ -169,7 +199,7 @@ const Index = () => {
                   key={device.id}
                   device={device}
                   onToggleSwitch={handleToggleSwitch}
-                  onUpdateDevice={handleUpdateDevice}
+                  onEditDevice={(d)=> setConfigDevice(d.id)}
                   onDeleteDevice={handleDeleteDevice}
                 />
               ))}
@@ -183,7 +213,28 @@ const Index = () => {
           open={!!configDevice}
           onOpenChange={(open) => !open && setConfigDevice(null)}
           onSubmit={(config) => {
-            handleUpdateDevice(configDevice, config);
+            // Map switches preserving id/state
+            const deviceRef = devices.find(d=>d.id===configDevice);
+            const merged = {
+              ...config,
+              switches: config.switches.map(sw => {
+                const existing = deviceRef?.switches.find(s=> s.id === (sw as any).id) || deviceRef?.switches.find(s=> s.name === sw.name);
+                return {
+                  id: (sw as any).id || existing?.id || `switch-${Date.now()}-${Math.random()}`,
+                  name: sw.name || existing?.name || 'Unnamed Switch',
+                  type: sw.type || existing?.type || 'relay',
+                  relayGpio: (sw as any).relayGpio || (sw as any).gpio || existing?.relayGpio || 0,
+                  state: (sw as any).state !== undefined ? (sw as any).state : (existing?.state ?? false),
+                  manualSwitchEnabled: sw.manualSwitchEnabled ?? existing?.manualSwitchEnabled ?? false,
+                  manualSwitchGpio: sw.manualSwitchGpio !== undefined ? sw.manualSwitchGpio : existing?.manualSwitchGpio,
+                  usePir: existing?.usePir || false,
+                  dontAutoOff: existing?.dontAutoOff || false,
+                  manualMode: (sw as any).manualMode || existing?.manualMode || 'maintained',
+                  manualActiveLow: (sw as any).manualActiveLow !== undefined ? (sw as any).manualActiveLow : (existing?.manualActiveLow ?? true)
+                };
+              })
+            };
+            handleUpdateDevice(configDevice, merged);
             setConfigDevice(null);
           }}
         />

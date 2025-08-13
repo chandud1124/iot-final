@@ -173,6 +173,9 @@ export const deviceAPI = {
   bulkToggleByLocation: (location: string, state: boolean) => api.post(`/devices/bulk-toggle/location/${encodeURIComponent(location)}`, { state }),
   
   getStats: () => api.get('/devices/stats'),
+  // Secure admin-only: fetch single device with secret (?includeSecret=1)
+  getDeviceWithSecret: (deviceId: string, pin?: string) =>
+    api.get(`/devices/${deviceId}`, { params: { includeSecret: 1, secretPin: pin } }),
 };
 
 export const authAPI = {
@@ -215,6 +218,7 @@ export const scheduleAPI = {
   deleteSchedule: (scheduleId: string) => api.delete(`/schedules/${scheduleId}`),
   
   toggleSchedule: (scheduleId: string) => api.put(`/schedules/${scheduleId}/toggle`),
+  runNow: (scheduleId: string) => api.post(`/schedules/${scheduleId}/run`),
 };
 
 export const activityAPI = {

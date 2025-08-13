@@ -72,7 +72,7 @@ const Settings = () => {
                   </p>
                 </div>
                 <Switch
-                  checked={settings?.notifications.email.enabled}
+                  checked={!!settings?.notifications.email.enabled}
                   onCheckedChange={(checked) => handleNotificationChange('email', checked)}
                   disabled={loading}
                 />
@@ -86,7 +86,7 @@ const Settings = () => {
                   </p>
                 </div>
                 <Switch
-                  checked={settings?.notifications.push.enabled}
+                  checked={!!settings?.notifications.push.enabled}
                   onCheckedChange={(checked) => handleNotificationChange('push', checked)}
                   disabled={loading}
                 />
@@ -133,7 +133,7 @@ const Settings = () => {
                   </p>
                 </div>
                 <Switch
-                  checked={settings?.security.motionDetectionEnabled}
+                  checked={!!settings?.security.motionDetectionEnabled}
                   onCheckedChange={(checked) => handleSecurityChange('motionDetectionEnabled', checked)}
                   disabled={loading}
                 />
@@ -146,8 +146,8 @@ const Settings = () => {
                     type="number"
                     min={30}
                     max={3600}
-                    value={settings?.security.deviceOfflineThreshold}
-                    onChange={(e) => handleSecurityChange('deviceOfflineThreshold', parseInt(e.target.value))}
+                    value={settings?.security.deviceOfflineThreshold ?? ''}
+                    onChange={(e) => handleSecurityChange('deviceOfflineThreshold', parseInt(e.target.value || '0'))}
                     disabled={loading}
                     className="max-w-[120px]"
                   />

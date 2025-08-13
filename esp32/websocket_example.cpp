@@ -1,37 +1,104 @@
-// Reference WebSocket example for ESP32 integration with backend
-// NOT part of the Node.js build; for Arduino / PlatformIO only.
-// Protocol summary (v1.0):
-//  Device -> Server:
-//    {"type":"identify","mac":"AA:BB:.."}
-//    {"type":"heartbeat","mac":"..","uptime":seconds}
-//    {"type":"state_update","macAddress":"..","switches":[{"gpio":26,"state":true}]}
-//  Server -> Device:
-//    {"type":"identified","mac":".."}
-//    {"type":"switch_command","mac":"..","gpio":26,"state":false}
-// WebSocket Path: /esp32-ws (see config.h or define constant below)
-// Update BACKEND_HOST to your backend's LAN IP (not localhost)
+// -----------------------------------------------------------------------------
+// Dynamic ESP32 <-> Backend WebSocket example with runtime pin config
+// Endpoint: ws://<HOST>:3001/esp32-ws  (server.js)
+// Identification payload now returns switch config; device adapts pins.
+// Supports on-the-fly config_update (when device edited in UI) and logs
+// every incoming switch_command including GPIO and desired state.
+// -----------------------------------------------------------------------------
+// Core messages:
+//  -> identify      {type:'identify', mac, secret}
+//  <- identified    {type:'identified', mode, switches:[{gpio,relayGpio,name,...}]}
+//  <- config_update {type:'config_update', switches:[...]}  (after UI edits)
+//  <- switch_command{type:'switch_command', gpio|relayGpio, state}
+//  -> state_update  {type:'state_update', switches:[{gpio,state}]}
+//  -> heartbeat     {type:'heartbeat', uptime}
+//  <- state_ack     {type:'state_ack', changed}
+// -----------------------------------------------------------------------------
 
 #include <WiFi.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
+#include <EEPROM.h>
+#include "config.h"
+// Uncomment to compile without mbedtls/HMAC (for older cores or minimal builds)
+// #define DISABLE_HMAC 1
+#ifndef DISABLE_HMAC
+#include <mbedtls/md.h>
+#endif
 
-#define WIFI_SSID "unknown"
-#define WIFI_PASSWORD "12345678"
-#define BACKEND_HOST "192.168.1.100"  // <-- change to backend IP
+#define WIFI_SSID "I am Not A Witch I am Your Wifi"
+#define WIFI_PASSWORD "Whoareu@0000"
+#define BACKEND_HOST "192.168.0.108"  // backend LAN IP
 #define BACKEND_PORT 3001
 #define WS_PATH "/esp32-ws"
-#define HEARTBEAT_MS 30000
-#define DEVICE_SECRET "CHANGE_ME_32CHARS_MIN" // Must match device.deviceSecret in backend
+#define HEARTBEAT_MS 30000UL          // 30s heartbeat interval
+#define DEVICE_SECRET "798f527ea312858e6a6f829b7a140eee192ac4a45c0f815c" // device secret from backend
+
+// Optional status LED (set to 255 to disable if your board lacks LED_BUILTIN)
+#ifndef STATUS_LED_PIN
+#define STATUS_LED_PIN 2
+#endif
+
+// Debounce multiple rapid local state changes into one state_update
+#define STATE_DEBOUNCE_MS 200
+
+// Active-low mapping: logical ON -> LOW, OFF -> HIGH (common relay boards)
 
 WebSocketsClient ws;
 unsigned long lastHeartbeat = 0;
+unsigned long lastStateSent = 0;
+bool pendingState = false;
+bool identified = false;
+unsigned long lastIdentifyAttempt = 0;
+#define IDENTIFY_RETRY_MS 10000UL // retry identify every 10s until successful
 
-struct SwitchState { uint8_t gpio; bool state; };
-SwitchState switchesLocal[4] = { {26,false},{25,false},{33,false},{32,false} };
+// Extended switch state supports optional manual (wall) switch input GPIO
+struct SwitchState {
+  int gpio;                    // relay control GPIO (output)
+  bool state;                  // logical ON/OFF state
+  String name;                 // label from backend
+  int manualGpio = -1;         // optional manual switch GPIO (input)
+  bool manualEnabled = false;  // whether manual input is active
+  bool manualActiveLow = true; // per-switch input polarity (independent of relay polarity)
+  bool manualMomentary = false; // true = momentary (toggle on active edge), false = maintained (level maps to state)
+  int lastManualLevel = -1;    // last raw digitalRead level
+  unsigned long lastManualChangeMs = 0; // last time raw level flipped
+  int stableManualLevel = -1;  // debounced level
+  bool lastManualActive = false; // previous debounced logical active level (after polarity)
+};
+#define MANUAL_DEBOUNCE_MS 30
+// Treat a falling edge (HIGH->LOW) on a pullup input as a toggle event
+#define MANUAL_ACTIVE_LOW 1
+#include <vector>
+std::vector<SwitchState> switchesLocal; // dynamically populated
 
+// -----------------------------------------------------------------------------
+// Utility helpers
+// -----------------------------------------------------------------------------
 void sendJson(const JsonDocument &doc) {
   String out; serializeJson(doc, out);
   ws.sendTXT(out);
+}
+
+String hmacSha256(const String &key, const String &msg) {
+#ifdef DISABLE_HMAC
+  // HMAC disabled: return empty string to skip signing
+  (void)key; (void)msg; return String("");
+#else
+  byte hmacResult[32];
+  mbedtls_md_context_t ctx;
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  mbedtls_md_init(&ctx);
+  mbedtls_md_setup(&ctx, info, 1);
+  mbedtls_md_hmac_starts(&ctx, (const unsigned char*)key.c_str(), key.length());
+  mbedtls_md_hmac_update(&ctx, (const unsigned char*)msg.c_str(), msg.length());
+  mbedtls_md_hmac_finish(&ctx, hmacResult);
+  mbedtls_md_free(&ctx);
+  char buf[65];
+  for (int i=0;i<32;i++) sprintf(&buf[i*2], "%02x", hmacResult[i]);
+  buf[64]='\0';
+  return String(buf);
+#endif
 }
 
 void identify() {
@@ -40,19 +107,31 @@ void identify() {
   doc["mac"] = WiFi.macAddress();
   doc["secret"] = DEVICE_SECRET; // simple shared secret (upgrade to HMAC if needed)
   sendJson(doc);
+  lastIdentifyAttempt = millis();
 }
 
-void sendStateUpdate() {
+void sendStateUpdate(bool force=false) {
+  unsigned long now = millis();
+  if (!force && now - lastStateSent < STATE_DEBOUNCE_MS) { pendingState = true; return; }
+  pendingState = false;
+  lastStateSent = now;
   DynamicJsonDocument doc(512);
   doc["type"] = "state_update";
-  doc["macAddress"] = WiFi.macAddress();
+  doc["seq"] = (long)(millis()); // coarse monotonic seq for state_update
+  doc["ts"] = (long)(millis());
   JsonArray arr = doc.createNestedArray("switches");
-  for (int i=0;i<4;i++) {
-    JsonObject sw = arr.createNestedObject();
-    sw["gpio"] = switchesLocal[i].gpio;
-    sw["state"] = switchesLocal[i].state;
+  for (auto &sw : switchesLocal) {
+    JsonObject o = arr.createNestedObject();
+    o["gpio"] = sw.gpio;
+    o["state"] = sw.state;
+  }
+  if (strlen(DEVICE_SECRET) > 0) {
+    String base = WiFi.macAddress();
+    base += "|"; base += (long)doc["seq"]; base += "|"; base += (long)doc["ts"];
+    doc["sig"] = hmacSha256(DEVICE_SECRET, base);
   }
   sendJson(doc);
+  Serial.println(F("[WS] -> state_update"));
 }
 
 void sendHeartbeat() {
@@ -63,49 +142,229 @@ void sendHeartbeat() {
   sendJson(doc);
 }
 
-void toggleRelay(int idx, bool state) {
-  switchesLocal[idx].state = state;
-  digitalWrite(switchesLocal[idx].gpio, state ? HIGH : LOW);
-  sendStateUpdate();
+// Track last applied sequence per GPIO to drop stale commands
+struct GpioSeq { int gpio; long seq; };
+static std::vector<GpioSeq> lastSeqs;
+long getLastSeq(int gpio){ for(auto &p: lastSeqs){ if(p.gpio==gpio) return p.seq; } return -1; }
+void setLastSeq(int gpio,long seq){ for(auto &p: lastSeqs){ if(p.gpio==gpio){ p.seq=seq; return;} } lastSeqs.push_back({gpio,seq}); }
+
+bool applySwitchState(int gpio, bool state) {
+  for (auto &sw : switchesLocal) {
+    if (sw.gpio == gpio) {
+      sw.state = state;
+      pinMode(sw.gpio, OUTPUT);
+  digitalWrite(sw.gpio, state ? LOW : HIGH);
+  Serial.printf("[SWITCH] GPIO %d -> %s (active-low)\n", sw.gpio, state ? "ON":"OFF");
+      sendStateUpdate(true); // immediate broadcast
+      return true;
+    }
+  }
+  Serial.printf("[SWITCH] Unknown GPIO %d (ignored)\n", gpio);
+  return false;
+}
+
+void loadConfigFromJsonArray(JsonArray arr) {
+  switchesLocal.clear();
+  for (JsonObject o : arr) {
+    int g = o["relayGpio"].is<int>() ? o["relayGpio"].as<int>() : (o["gpio"].is<int>() ? o["gpio"].as<int>() : -1);
+    if (g < 0) continue;
+    bool desiredState = o["state"].is<bool>() ? o["state"].as<bool>() : false; // default OFF logically
+    SwitchState sw { };
+    sw.gpio = g;
+    sw.state = desiredState;
+    sw.name = String(o["name"].is<const char*>() ? o["name"].as<const char*>() : "");
+    // Manual switch config (optional)
+    if (o["manualSwitchEnabled"].is<bool>() && o["manualSwitchEnabled"].as<bool>() && o["manualSwitchGpio"].is<int>()) {
+      sw.manualEnabled = true;
+      sw.manualGpio = o["manualSwitchGpio"].as<int>();
+      // Parse manualMode (maintained | momentary) and polarity
+      if (o["manualMode"].is<const char*>()) {
+        const char *mm = o["manualMode"].as<const char*>();
+        sw.manualMomentary = (strcmp(mm, "momentary") == 0);
+      }
+      if (o["manualActiveLow"].is<bool>()) {
+        sw.manualActiveLow = o["manualActiveLow"].as<bool>();
+      }
+    }
+    pinMode(g, OUTPUT);
+  digitalWrite(g, desiredState ? LOW : HIGH);
+    if (sw.manualEnabled && sw.manualGpio >= 0) {
+      // Configure input with proper pull depending on polarity.
+      // NOTE: GPIOs 34-39 are input-only and DO NOT support internal pull-up/down.
+      // For those pins, we set INPUT and require an external resistor.
+      if (sw.manualGpio >= 34 && sw.manualGpio <= 39) {
+        pinMode(sw.manualGpio, INPUT);
+        Serial.printf("[MANUAL][WARN] gpio=%d is input-only (34-39) without internal pull resistors. Use external pull-%s.\n",
+                      sw.manualGpio, sw.manualActiveLow ? "up to 3.3V" : "down to GND");
+      } else {
+        if (sw.manualActiveLow) {
+          pinMode(sw.manualGpio, INPUT_PULLUP); // active when pulled LOW (to GND)
+        } else {
+          // Many ESP32 pins support internal pulldown; if not available, add external pulldown
+          pinMode(sw.manualGpio, INPUT_PULLDOWN);
+        }
+      }
+      sw.lastManualLevel = digitalRead(sw.manualGpio);
+      sw.stableManualLevel = sw.lastManualLevel;
+      // Initialize active logical level after polarity mapping
+      sw.lastManualActive = sw.manualActiveLow ? (sw.stableManualLevel == LOW) : (sw.stableManualLevel == HIGH);
+      Serial.printf("[MANUAL][INIT] gpio=%d (input %d) activeLow=%d mode=%s raw=%d active=%d\n",
+                    sw.gpio, sw.manualGpio, sw.manualActiveLow ? 1 : 0,
+                    sw.manualMomentary ? "momentary" : "maintained",
+                    sw.stableManualLevel, sw.lastManualActive ? 1 : 0);
+    }
+    switchesLocal.push_back(sw);
+  }
+  Serial.printf("[CONFIG] Loaded %u switches\n", (unsigned)switchesLocal.size());
+  // Snapshot print for verification
+  for (auto &sw : switchesLocal) {
+    Serial.printf("[SNAPSHOT] gpio=%d state=%s manual=%s manualGpio=%d mode=%s activeLow=%d\n",
+                  sw.gpio, sw.state?"ON":"OFF", sw.manualEnabled?"yes":"no", sw.manualGpio,
+                  sw.manualMomentary?"momentary":"maintained", sw.manualActiveLow?1:0);
+  }
+  sendStateUpdate(true);
 }
 
 void onWsEvent(WStype_t type, uint8_t * payload, size_t len) {
   switch (type) {
     case WStype_CONNECTED:
       Serial.println("WS connected");
+      identified = false;
+      if (STATUS_LED_PIN != 255) digitalWrite(STATUS_LED_PIN, LOW);
       identify();
       break;
     case WStype_TEXT: {
-      DynamicJsonDocument doc(512);
-      if (deserializeJson(doc, payload, len) != DeserializationError::Ok) return;
-      const char* msgType = doc["type"] | "";
-      if (strcmp(msgType, "switch_command") == 0) {
-        int gpio = doc["gpio"] | -1;
-        bool state = doc["state"] | false;
-        for (int i=0;i<4;i++) if (switchesLocal[i].gpio == gpio) toggleRelay(i, state);
+      DynamicJsonDocument doc(1024);
+      if (deserializeJson(doc, payload, len) != DeserializationError::Ok) {
+        Serial.println(F("[WS] JSON parse error"));
+        return;
       }
+      const char* msgType = doc["type"] | "";
+      if (strcmp(msgType, "identified") == 0) {
+        identified = true;
+        if (STATUS_LED_PIN != 255) digitalWrite(STATUS_LED_PIN, HIGH);
+  const char* _mode = doc["mode"].is<const char*>() ? doc["mode"].as<const char*>() : "n/a";
+  Serial.printf("[WS] <- identified mode=%s\n", _mode);
+  // Reset per-GPIO sequence tracking on fresh identify to avoid stale_seq after server restarts
+  lastSeqs.clear();
+        if (doc["switches"].is<JsonArray>()) loadConfigFromJsonArray(doc["switches"].as<JsonArray>());
+        else Serial.println(F("[CONFIG] No switches in identified payload (using none)"));
+        return;
+      }
+      if (strcmp(msgType, "config_update") == 0) {
+        if (doc["switches"].is<JsonArray>()) {
+          Serial.println(F("[WS] <- config_update"));
+          // Clear seq tracking as mapping may change
+          lastSeqs.clear();
+          loadConfigFromJsonArray(doc["switches"].as<JsonArray>());
+        }
+        return;
+      }
+      if (strcmp(msgType, "state_ack") == 0) {
+        bool changed = doc["changed"] | false;
+        Serial.printf("[WS] <- state_ack changed=%s\n", changed ? "true":"false");
+        return;
+      }
+      if (strcmp(msgType, "switch_command") == 0) {
+        int gpio = doc["relayGpio"].is<int>() ? doc["relayGpio"].as<int>() : (doc["gpio"].is<int>() ? doc["gpio"].as<int>() : -1);
+        bool requested = doc["state"] | false;
+        long seq = doc["seq"].is<long>() ? doc["seq"].as<long>() : -1;
+        Serial.printf("[CMD] Raw: %.*s\n", (int)len, payload);
+        Serial.printf("[CMD] switch_command gpio=%d state=%s seq=%ld\n", gpio, requested ? "ON":"OFF", seq);
+        // Drop stale if older than last applied for this gpio
+        if (seq >= 0) {
+          long last = getLastSeq(gpio);
+          if (last >= 0 && seq < last) {
+            Serial.printf("[CMD] drop stale seq (last=%ld)\n", last);
+            // Still send a result so backend can ignore
+            DynamicJsonDocument res(192);
+            res["type"] = "switch_result";
+            res["gpio"] = gpio;
+            res["requestedState"] = requested;
+            res["success"] = false;
+            res["reason"] = "stale_seq";
+            res["seq"] = seq;
+            sendJson(res);
+            return;
+          }
+          setLastSeq(gpio, seq);
+        }
+        bool success = false;
+        if (gpio >= 0) {
+          success = applySwitchState(gpio, requested);
+        }
+        // Send explicit result so backend can reconcile UI if failure
+        DynamicJsonDocument res(192);
+        res["type"] = "switch_result";
+        res["gpio"] = gpio;
+        res["requestedState"] = requested;
+        res["success"] = success;
+        if (seq >= 0) res["seq"] = seq;
+        res["ts"] = (long)millis();
+        if (strlen(DEVICE_SECRET) > 0) {
+          String base = WiFi.macAddress();
+          base += "|"; base += gpio;
+          base += "|"; base += (success?1:0);
+          base += "|"; base += (requested?1:0);
+          bool actual = false; for (auto &sw : switchesLocal) if (sw.gpio == gpio) { actual = sw.state; break; }
+          res["actualState"] = actual;
+          base += "|"; base += (actual?1:0);
+          base += "|"; base += (long)res["seq"];
+          base += "|"; base += (long)res["ts"];
+          res["sig"] = hmacSha256(DEVICE_SECRET, base);
+        }
+        if (!success) {
+          res["reason"] = "unknown_gpio";
+        } else {
+          // find actual state to echo
+          for (auto &sw : switchesLocal) if (sw.gpio == gpio) { res["actualState"] = sw.state; break; }
+        }
+        sendJson(res);
+        return;
+      }
+      Serial.printf("[WS] <- unhandled type=%s Raw=%.*s\n", msgType, (int)len, payload);
       break; }
     case WStype_DISCONNECTED:
       Serial.println("WS disconnected");
+      identified = false;
+      if (STATUS_LED_PIN != 255) digitalWrite(STATUS_LED_PIN, LOW);
       break;
     default: break;
   }
 }
 
 void setupRelays() {
-  for (int i=0;i<4;i++) {
-    pinMode(switchesLocal[i].gpio, OUTPUT);
-    digitalWrite(switchesLocal[i].gpio, LOW);
+  // Initially no switches (dynamic config arrives after identify).
+  // If you want fallback default pins, push_back them here.
+  if (switchesLocal.empty()) {
+    Serial.println(F("[INIT] No local switches yet (waiting for identified/config_update)"));
+  } else {
+    for (auto &sw : switchesLocal) {
+      pinMode(sw.gpio, OUTPUT);
+  // Ensure hardware reflects stored logical state (active-low)
+  digitalWrite(sw.gpio, sw.state ? LOW : HIGH);
+    }
   }
 }
 
 void setup() {
   Serial.begin(115200);
+  // EEPROM init and optional clear on version bump
+  EEPROM.begin(EEPROM_SIZE);
+  const int verAddr = 0;
+  int storedVer = EEPROM.read(verAddr);
+  if (storedVer != CONFIG_VERSION) {
+    Serial.printf("[EEPROM] Version mismatch (stored=%d, expected=%d). Clearing...\n", storedVer, CONFIG_VERSION);
+    for (int i=0;i<EEPROM_SIZE;i++) EEPROM.write(i, 0);
+    EEPROM.write(verAddr, CONFIG_VERSION);
+    EEPROM.commit();
+  }
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("WiFi");
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.println("\nWiFi OK");
-  setupRelays();
+  setupRelays(); // safe: does nothing until config arrives
+  if (STATUS_LED_PIN != 255) { pinMode(STATUS_LED_PIN, OUTPUT); digitalWrite(STATUS_LED_PIN, LOW); }
   ws.begin(BACKEND_HOST, BACKEND_PORT, WS_PATH);
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(5000); // base interval; library uses backoff internally
@@ -119,6 +378,58 @@ void loop() {
   if (millis() - lastHeartbeat > HEARTBEAT_MS) {
     sendHeartbeat();
     lastHeartbeat = millis();
+  }
+  // If we have a websocket connection but haven't been identified yet, retry identify periodically
+  if (!identified && (millis() - lastIdentifyAttempt) > IDENTIFY_RETRY_MS) {
+    identify();
+  }
+  // Flush a pending coalesced state update when debounce interval elapsed
+  if (pendingState && (millis() - lastStateSent) >= STATE_DEBOUNCE_MS) {
+    sendStateUpdate();
+  }
+  // Poll manual (wall) switches for changes with debounce
+  unsigned long now = millis();
+  bool anyManualToggled = false;
+  for (auto &sw : switchesLocal) {
+    if (!sw.manualEnabled || sw.manualGpio < 0) continue;
+    int lvl = digitalRead(sw.manualGpio);
+    if (lvl != sw.lastManualLevel) {
+      sw.lastManualLevel = lvl;
+      sw.lastManualChangeMs = now; // start debounce window
+  Serial.printf("[MANUAL][RAW] input=%d level=%d at %lu ms\n", sw.manualGpio, lvl, (unsigned long)now);
+    }
+    // Debounce: require stable level for MANUAL_DEBOUNCE_MS
+    if ((now - sw.lastManualChangeMs) >= MANUAL_DEBOUNCE_MS && lvl != sw.stableManualLevel) {
+      // Level stabilized at new value
+      sw.stableManualLevel = lvl;
+      bool logicalActive = sw.manualActiveLow ? (sw.stableManualLevel == LOW) : (sw.stableManualLevel == HIGH);
+  Serial.printf("[MANUAL][STABLE] input=%d raw=%d logicalActive=%d mode=%s\n",
+        sw.manualGpio, sw.stableManualLevel, logicalActive?1:0, sw.manualMomentary?"momentary":"maintained");
+
+      if (sw.manualMomentary) {
+        // Toggle only on rising active edge (inactive->active)
+        if (logicalActive && !sw.lastManualActive) {
+          bool newState = !sw.state;
+          Serial.printf("[MANUAL] momentary edge gpio=%d (input %d) -> toggle -> %s\n", sw.gpio, sw.manualGpio, newState?"ON":"OFF");
+          applySwitchState(sw.gpio, newState);
+          anyManualToggled = true;
+        }
+      } else {
+        // Maintained: map level directly to state
+        if (logicalActive != sw.state) {
+          Serial.printf("[MANUAL] maintained level gpio=%d (input %d) active=%d -> state=%s\n", sw.gpio, sw.manualGpio, logicalActive, logicalActive?"ON":"OFF");
+          applySwitchState(sw.gpio, logicalActive);
+          anyManualToggled = true;
+        }
+      }
+      sw.lastManualActive = logicalActive;
+    } else if ((now - sw.lastManualChangeMs) >= MANUAL_DEBOUNCE_MS) {
+      // No new stable level but ensure lastManualActive reflects stable level after initial setup
+      sw.lastManualActive = sw.manualActiveLow ? (sw.stableManualLevel == LOW) : (sw.stableManualLevel == HIGH);
+    }
+  }
+  if (anyManualToggled) {
+    // applySwitchState already sends an immediate state_update(true)
   }
   delay(10);
 }

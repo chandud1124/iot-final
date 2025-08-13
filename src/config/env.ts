@@ -6,7 +6,7 @@ export const config = {
   websocketUrl: import.meta.env.VITE_WEBSOCKET_URL || 'ws://localhost:3001',
   
   // Application Settings
-  appName: import.meta.env.VITE_APP_NAME || 'IoT Home Automation',
+  appName: import.meta.env.VITE_APP_NAME || 'IoT College Automation',
   appVersion: import.meta.env.VITE_APP_VERSION || '1.0.0',
   
   // Development Settings

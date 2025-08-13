@@ -117,7 +117,8 @@ const Switches = () => {
         totalSwitches={totalSwitches}
         activeSwitches={activeSwitches}
         offlineDevices={devices.filter(d => d.status !== 'online').length}
-        onMasterToggle={handleMasterToggle}
+  onMasterToggle={handleMasterToggle}
+  isBusy={false}
       />
 
       {filteredDevices.length === 0 ? (
@@ -179,7 +180,7 @@ const Switches = () => {
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-medium truncate" title={sw.name}>{sw.name}</span>
                               <Switch
-                                checked={sw.state}
+                                checked={!!sw.state}
                                 disabled={device.status !== 'online'}
                                 onCheckedChange={() => handleToggle(device.id, sw.id)}
                               />

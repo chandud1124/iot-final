@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, Clock, Plus, Edit, Trash2 } from 'lucide-react';
 import { ScheduleDialog } from '@/components/ScheduleDialog';
+import { scheduleAPI } from '@/services/api';
 import { useToast } from '@/hooks/use-toast';
 
 interface Schedule {
@@ -14,11 +15,25 @@ interface Schedule {
   name: string;
   time: string;
   action: 'on' | 'off';
+  // Days are user-friendly names for UI, we map to numbers (0-6) when calling the API
   days: string[];
+  // Switch IDs are composite `${deviceId}-${switchId}` for UI; map to objects for API
   switches: string[];
   enabled: boolean;
   timeoutMinutes?: number;
 }
+// Day helpers: backend expects 0-6 (0=Sunday) and cron uses same
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+const dayNameToNumber = (name: string): number => {
+  const idx = DAY_NAMES.findIndex(d => d.toLowerCase() === name.toLowerCase());
+  return idx >= 0 ? idx : 1; // default to Monday
+};
+const dayNumberToName = (n: number): string => DAY_NAMES[n] ?? 'Monday';
+const toSwitchRef = (comboId: string) => {
+  const [deviceId, switchId] = comboId.split('-');
+  return { deviceId, switchId };
+};
+const fromSwitchRef = (ref: any): string => `${ref.deviceId}-${ref.switchId}`;
 
 // Google Calendar Connect Component
 function GoogleCalendarConnect({ onConnect }: { onConnect: () => void }) {
@@ -41,7 +56,6 @@ function GoogleCalendarConnect({ onConnect }: { onConnect: () => void }) {
     }
     setLoading(false);
   };
-
   return (
     <div className="mb-4">
       <p className="mb-2">Google Calendar Connection Status: <b>{status}</b></p>
@@ -152,6 +166,15 @@ function GoogleCalendarPanel() {
 const Schedule = () => {
   const { toast } = useToast();
   const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const runScheduleNow = async (scheduleId: string) => {
+    try {
+      await scheduleAPI.runNow(scheduleId);
+      toast({ title: 'Schedule Executed', description: 'Triggered immediately. Check device state.' });
+    } catch (error: any) {
+      console.error('Run-now error:', error);
+      toast({ title: 'Error', description: error.response?.data?.message || error.response?.data?.error || 'Failed to run schedule', variant: 'destructive' });
+    }
+  };
   
   useEffect(() => {
     const fetchSchedules = async () => {
@@ -163,8 +186,10 @@ const Schedule = () => {
             name: s.name,
             time: s.time,
             action: s.action,
-            days: s.days,
-            switches: s.switches,
+            // Backend stores numbers; convert to names for UI
+            days: Array.isArray(s.days) ? s.days.map((n: number) => dayNumberToName(n)) : [],
+            // Backend stores objects { deviceId, switchId }; convert to combo ids for UI
+            switches: Array.isArray(s.switches) ? s.switches.map(fromSwitchRef) : [],
             enabled: s.enabled,
             timeoutMinutes: s.timeoutMinutes
           }));
@@ -180,7 +205,7 @@ const Schedule = () => {
         console.error('Schedule fetch error:', error);
         toast({
           title: "Error",
-          description: error.response?.data?.message || "Failed to fetch schedules",
+          description: error.response?.data?.message || error.response?.data?.error || "Failed to fetch schedules",
           variant: "destructive"
         });
       }
@@ -196,9 +221,31 @@ const Schedule = () => {
 
   const handleAddSchedule = async (scheduleData: any) => {
     try {
-  const response = await api.post('/schedules', scheduleData);
+      // Map UI payload to backend schema
+      const payload = {
+        name: scheduleData.name,
+        time: scheduleData.time,
+        action: scheduleData.action,
+        type: 'weekly', // UI selects days; treat as weekly schedule
+        days: (scheduleData.days || []).map((d: string) => dayNameToNumber(d)),
+        switches: (scheduleData.switches || []).map((id: string) => toSwitchRef(id)),
+        enabled: true,
+        timeoutMinutes: scheduleData.timeoutMinutes ?? 0
+      };
+      const response = await api.post('/schedules', payload);
       if (response.data.success) {
-        const newSchedule = response.data.data;
+        const s = response.data.data;
+        // Normalize server schedule back to UI shape
+        const newSchedule: Schedule = {
+          id: s._id || s.id,
+          name: s.name,
+          time: s.time,
+          action: s.action,
+          days: (s.days || []).map((n: number) => dayNumberToName(n)),
+          switches: (s.switches || []).map(fromSwitchRef),
+          enabled: s.enabled,
+          timeoutMinutes: s.timeoutMinutes
+        };
         setSchedules(prev => [...prev, newSchedule]);
         toast({
           title: "Schedule Added",
@@ -209,7 +256,7 @@ const Schedule = () => {
       console.error('Add schedule error:', error);
       toast({
         title: "Error",
-        description: error.response?.data?.message || "Failed to add schedule",
+        description: error.response?.data?.message || error.response?.data?.error || "Failed to add schedule",
         variant: "destructive"
       });
     }
@@ -219,9 +266,29 @@ const Schedule = () => {
     if (!editingSchedule) return;
     
     try {
-  const response = await api.put(`/schedules/${editingSchedule.id}`, scheduleData);
+      const payload = {
+        name: scheduleData.name,
+        time: scheduleData.time,
+        action: scheduleData.action,
+        type: 'weekly',
+        days: (scheduleData.days || []).map((d: string) => dayNameToNumber(d)),
+        switches: (scheduleData.switches || []).map((id: string) => toSwitchRef(id)),
+        enabled: true,
+        timeoutMinutes: scheduleData.timeoutMinutes ?? 0
+      };
+      const response = await api.put(`/schedules/${editingSchedule.id}`, payload);
       if (response.data.success) {
-        const updatedSchedule = response.data.data;
+        const s = response.data.data;
+        const updatedSchedule: Schedule = {
+          id: s._id || s.id,
+          name: s.name,
+          time: s.time,
+          action: s.action,
+          days: (s.days || []).map((n: number) => dayNumberToName(n)),
+          switches: (s.switches || []).map(fromSwitchRef),
+          enabled: s.enabled,
+          timeoutMinutes: s.timeoutMinutes
+        };
         setSchedules(prev => 
           prev.map(schedule => 
             schedule.id === editingSchedule.id 
@@ -239,7 +306,7 @@ const Schedule = () => {
       console.error('Edit schedule error:', error);
       toast({
         title: "Error",
-        description: error.response?.data?.message || "Failed to update schedule",
+        description: error.response?.data?.message || error.response?.data?.error || "Failed to update schedule",
         variant: "destructive"
       });
     }
@@ -265,14 +332,19 @@ const Schedule = () => {
     }
   };
 
-  const toggleSchedule = (scheduleId: string) => {
-    setSchedules(prev => 
-      prev.map(schedule => 
-        schedule.id === scheduleId 
-          ? { ...schedule, enabled: !schedule.enabled }
-          : schedule
-      )
-    );
+  const toggleSchedule = async (scheduleId: string) => {
+    const target = schedules.find(s => s.id === scheduleId);
+    if (!target) return;
+    try {
+      const response = await api.put(`/schedules/${scheduleId}`, { enabled: !target.enabled });
+      if (response.data.success) {
+        setSchedules(prev => prev.map(s => s.id === scheduleId ? { ...s, enabled: !target.enabled } : s));
+        toast({ title: 'Schedule Updated', description: `${target.name} ${!target.enabled ? 'enabled' : 'disabled'}` });
+      }
+    } catch (error: any) {
+      console.error('Toggle schedule error:', error);
+      toast({ title: 'Error', description: error.response?.data?.message || error.response?.data?.error || 'Failed to update schedule', variant: 'destructive' });
+    }
   };
 
   return (
@@ -408,6 +480,14 @@ const Schedule = () => {
                         }}
                       >
                         <Edit className="w-3 h-3" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => runScheduleNow(schedule.id)}
+                        title="Run now"
+                      >
+                        Run Now
                       </Button>
                       <Button
                         size="sm"

@@ -9,7 +9,6 @@
     "test": "jest"
   },
   "dependencies": {
-    "@types/socket.io-client": "^1.4.36",
     "axios": "^1.4.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

@@ -24,6 +24,7 @@ import { GlobalLoadingOverlay } from '@/components/GlobalLoadingOverlay';
 
 const queryClient = new QueryClient();
 
+import { DevicesProvider } from '@/hooks/useDevices';
 const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
@@ -46,9 +47,11 @@ const App = () => {
               path="/"
               element={
                 <PrivateRoute>
-                  <Layout>
-                    <Outlet />
-                  </Layout>
+                  <DevicesProvider>
+                    <Layout>
+                      <Outlet />
+                    </Layout>
+                  </DevicesProvider>
                 </PrivateRoute>
               }
             >

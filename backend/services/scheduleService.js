@@ -9,6 +9,8 @@ const calendarService = require('./calendarService');
 class ScheduleService {
   constructor() {
     this.jobs = new Map();
+  // Per-device command sequence for deterministic ordering
+  this._cmdSeqMap = new Map(); // mac -> last seq
     this.init();
   }
 
@@ -31,23 +33,57 @@ class ScheduleService {
     }
   }
 
+  nextCmdSeq(mac) {
+    if (!mac) return 0;
+    const key = mac.toUpperCase();
+    const prev = this._cmdSeqMap.get(key) || 0;
+    const next = prev + 1;
+    this._cmdSeqMap.set(key, next);
+    return next;
+  }
+
+  _emitDeviceStateChanged(device, source='schedule') {
+    try {
+      if (!device) return;
+      const payload = { deviceId: device.id || device._id?.toString(), state: device, ts: Date.now(), source };
+      if (global.io) global.io.emit('device_state_changed', payload);
+    } catch (e) { /* noop */ }
+  }
+
+  _dispatchToHardware(device, gpio, desiredState) {
+    try {
+      if (!device || !device.macAddress) return { sent:false, reason:'no_device_mac' };
+      const ws = global.wsDevices ? global.wsDevices.get(device.macAddress.toUpperCase()) : null;
+      if (ws && ws.readyState === 1) {
+        const payload = { type:'switch_command', mac: device.macAddress, gpio, state: desiredState, seq: this.nextCmdSeq(device.macAddress) };
+        ws.send(JSON.stringify(payload));
+        return { sent:true, reason:'sent' };
+      }
+      return { sent:false, reason: ws ? `ws_state_${ws.readyState}` : 'ws_not_found' };
+    } catch (e) {
+      return { sent:false, reason: 'exception_'+e.message };
+    }
+  }
+
   createCronJob(schedule) {
     try {
-      const cronPattern = this.getCronPattern(schedule);
+  const cronPattern = this.getCronPattern(schedule);
       
       if (this.jobs.has(schedule._id.toString())) {
-        this.jobs.get(schedule._id.toString()).destroy();
+        const existing = this.jobs.get(schedule._id.toString());
+        try { if (existing && typeof existing.stop === 'function') existing.stop(); } catch {}
+        try { if (existing && typeof existing.destroy === 'function') existing.destroy(); } catch {}
       }
 
-      const job = cron.schedule(cronPattern, async () => {
+  const job = cron.schedule(cronPattern, async () => {
         await this.executeSchedule(schedule);
       }, {
         scheduled: true,
         timezone: 'Asia/Kolkata'
       });
 
-      this.jobs.set(schedule._id.toString(), job);
-      console.log(`Created cron job for schedule: ${schedule.name}`);
+  this.jobs.set(schedule._id.toString(), job);
+  console.log(`Created cron job for schedule: ${schedule.name} (pattern: ${cronPattern}, tz: Asia/Kolkata)`);
     } catch (error) {
       console.error(`Error creating cron job for schedule ${schedule.name}:`, error);
     }
@@ -166,9 +202,25 @@ class ScheduleService {
         }
       }
 
-      // Update switch state
-      device.switches[switchIndex].state = schedule.action === 'on';
+      // Update switch state in DB
+      const desiredState = schedule.action === 'on';
+      device.switches[switchIndex].state = desiredState;
       await device.save();
+      this._emitDeviceStateChanged(device, 'schedule:update_db');
+
+      // Push command to ESP32 if connected, else queue intent for when it comes online
+      const gpio = device.switches[switchIndex].relayGpio || device.switches[switchIndex].gpio;
+      if (gpio !== undefined) {
+        const hw = this._dispatchToHardware(device, gpio, desiredState);
+        if (!hw.sent) {
+          // Queue intent (replace any existing for same gpio)
+          try {
+            device.queuedIntents = (device.queuedIntents || []).filter(q => q.switchGpio !== gpio);
+            device.queuedIntents.push({ switchGpio: gpio, desiredState, createdAt: new Date() });
+            await device.save();
+          } catch {}
+        }
+      }
 
       // Log activity
       await ActivityLog.create({
@@ -244,9 +296,23 @@ class ScheduleService {
         return;
       }
 
-      // Turn off switch
+      // Turn off switch in DB
       device.switches[switchIndex].state = false;
       await device.save();
+      this._emitDeviceStateChanged(device, 'schedule:auto_off_db');
+
+      // Dispatch OFF to hardware or queue if offline
+      const gpio = device.switches[switchIndex].relayGpio || device.switches[switchIndex].gpio;
+      if (gpio !== undefined) {
+        const hw = this._dispatchToHardware(device, gpio, false);
+        if (!hw.sent) {
+          try {
+            device.queuedIntents = (device.queuedIntents || []).filter(q => q.switchGpio !== gpio);
+            device.queuedIntents.push({ switchGpio: gpio, desiredState: false, createdAt: new Date() });
+            await device.save();
+          } catch {}
+        }
+      }
 
       // Log activity
       await ActivityLog.create({
@@ -275,7 +341,9 @@ class ScheduleService {
 
   removeJob(scheduleId) {
     if (this.jobs.has(scheduleId)) {
-      this.jobs.get(scheduleId).destroy();
+  const existing = this.jobs.get(scheduleId);
+  try { if (existing && typeof existing.stop === 'function') existing.stop(); } catch {}
+  try { if (existing && typeof existing.destroy === 'function') existing.destroy(); } catch {}
       this.jobs.delete(scheduleId);
       console.log(`Removed cron job for schedule: ${scheduleId}`);
     }

@@ -59,6 +59,40 @@ router.put('/:id', authorize('admin', 'faculty'), async (req, res) => {
   }
 });
 
+// Toggle schedule enabled flag (frontend calls this route)
+router.put('/:id/toggle', authorize('admin', 'faculty'), async (req, res) => {
+  try {
+    const schedule = await Schedule.findById(req.params.id);
+    if (!schedule) {
+      return res.status(404).json({ message: 'Schedule not found' });
+    }
+
+    schedule.enabled = !schedule.enabled;
+    await schedule.save();
+
+    // Update associated cron job
+    scheduleService.updateSchedule(schedule);
+
+    res.json({ success: true, data: schedule });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Run schedule immediately (for testing/debugging)
+router.post('/:id/run', authorize('admin', 'faculty'), async (req, res) => {
+  try {
+    const schedule = await Schedule.findById(req.params.id);
+    if (!schedule) {
+      return res.status(404).json({ message: 'Schedule not found' });
+    }
+    await scheduleService.executeSchedule(schedule);
+    res.json({ success: true, message: 'Schedule executed' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // Delete schedule
 router.delete('/:id', authorize('admin', 'faculty'), async (req, res) => {
   try {

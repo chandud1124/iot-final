@@ -10,25 +10,16 @@ import {
   Trash2
 } from 'lucide-react';
 import { SwitchControl } from './SwitchControl';
-import { DeviceConfigDialog } from './DeviceConfigDialog';
 import { Device } from '@/types';
 
 interface DeviceCardProps {
   device: Device;
   onToggleSwitch: (deviceId: string, switchId: string) => void;
-  onUpdateDevice?: (deviceId: string, data: Partial<Device>) => void;
+  onEditDevice?: (device: Device) => void; // request opening shared edit dialog
   onDeleteDevice?: (deviceId: string) => void;
 }
 
-export default function DeviceCard({ device, onToggleSwitch, onUpdateDevice, onDeleteDevice }: DeviceCardProps) {
-  const [showConfigDialog, setShowConfigDialog] = useState(false);
-
-  const handleSubmit = (data: any) => {
-    if (onUpdateDevice) {
-      onUpdateDevice(device.id, data);
-    }
-    setShowConfigDialog(false);
-  };
+export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDeleteDevice }: DeviceCardProps) {
 
   return (
     <Card className="w-full">
@@ -49,7 +40,7 @@ export default function DeviceCard({ device, onToggleSwitch, onUpdateDevice, onD
             variant="ghost"
             size="icon"
             className="h-8 w-8"
-            onClick={() => setShowConfigDialog(true)}
+            onClick={() => onEditDevice && onEditDevice(device)}
           >
             <Settings className="h-4 w-4" />
           </Button>
@@ -84,9 +75,18 @@ export default function DeviceCard({ device, onToggleSwitch, onUpdateDevice, onD
                   <SwitchControl
             key={switch_.id || (switch_ as any)._id || `${switch_.name}-${(switch_ as any).gpio || (switch_ as any).relayGpio || i}`}
                     switch={switch_}
-                    onToggle={() => onToggleSwitch(device.id, switch_.id)}
+                    onToggle={() => {
+                      const sid = switch_.id || (switch_ as any)._id;
+                      if (sid) onToggleSwitch(device.id, sid);
+                      else console.warn('Switch missing id when toggling', switch_);
+                    }}
                     disabled={device.status !== 'online'}
-                    isPirActive={switch_.usePir && device.pirEnabled}
+                    isPirActive={(() => {
+                      if (!switch_.usePir || !device.pirEnabled) return false;
+                      const last = (device as any).pirSensorLastTriggered ? new Date((device as any).pirSensorLastTriggered).getTime() : 0;
+                      const windowMs = ((device.pirAutoOffDelay ?? 30) * 1000);
+                      return !!last && (Date.now() - last) <= windowMs;
+                    })()}
                   />
                 ))}
           </div>
@@ -108,13 +108,6 @@ export default function DeviceCard({ device, onToggleSwitch, onUpdateDevice, onD
           )}
         </div>
       </CardContent>
-
-      <DeviceConfigDialog
-        open={showConfigDialog}
-        onOpenChange={setShowConfigDialog}
-        onSubmit={handleSubmit}
-        initialData={device}
-      />
     </Card>
   );
 };

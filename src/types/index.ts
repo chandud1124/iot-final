@@ -19,12 +19,16 @@ export interface Device {
 export interface Switch {
   id: string;
   name: string;
+  // Primary GPIO used by backend model; keep optional to avoid breaking existing code paths
+  gpio?: number;
   relayGpio: number;
   state: boolean;
   type: 'relay' | 'light' | 'fan' | 'outlet' | 'projector' | 'ac';
   icon?: string;
   manualSwitchEnabled: boolean;
   manualSwitchGpio?: number;
+  manualMode?: 'maintained' | 'momentary';
+  manualActiveLow?: boolean;
   usePir: boolean;
   schedule?: Schedule[];
   powerConsumption?: number;

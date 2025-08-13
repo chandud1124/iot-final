@@ -13,7 +13,17 @@ const Master = () => {
   const { devices, toggleAllSwitches, bulkToggleType, toggleDeviceAllSwitches } = useDevices();
   const { toast } = useToast();
 
-  const allSwitches = devices.flatMap(device => 
+  // Separate live (online devices) vs offline device switches
+  const liveSwitches = devices.filter(d => d.status === 'online').flatMap(device => 
+    device.switches.map(sw => ({
+      ...sw,
+      deviceName: device.name,
+      deviceId: device.id,
+      deviceStatus: device.status,
+      location: device.location || 'Unknown'
+    }))
+  );
+  const offlineSwitches = devices.filter(d => d.status !== 'online').flatMap(device => 
     device.switches.map(sw => ({
       ...sw,
       deviceName: device.name,
@@ -23,19 +33,20 @@ const Master = () => {
     }))
   );
 
-  const totalSwitches = allSwitches.length;
-  const activeSwitches = allSwitches.filter(sw => sw.state).length;
+  const totalSwitches = liveSwitches.length;
+  const activeSwitches = liveSwitches.filter(sw => sw.state).length;
+  const offlineActiveSwitches = offlineSwitches.filter(sw => sw.state).length; // last-known ON on offline devices
 
   // Group switches by type for quick controls (only include non-empty)
-  const rawTypeGroups: Record<string, typeof allSwitches> = {
-    light: allSwitches.filter(sw => sw.type === 'light'),
-    fan: allSwitches.filter(sw => sw.type === 'fan'),
-    outlet: allSwitches.filter(sw => sw.type === 'outlet'),
-    relay: allSwitches.filter(sw => sw.type === 'relay')
+  const rawTypeGroups: Record<string, typeof liveSwitches> = {
+    light: liveSwitches.filter(sw => sw.type === 'light'),
+    fan: liveSwitches.filter(sw => sw.type === 'fan'),
+    outlet: liveSwitches.filter(sw => sw.type === 'outlet'),
+    relay: liveSwitches.filter(sw => sw.type === 'relay')
   };
   const switchesByType = Object.entries(rawTypeGroups)
     .filter(([, list]) => list.length > 0)
-    .reduce<Record<string, typeof allSwitches>>((acc,[k,v]) => { acc[k]=v; return acc; }, {});
+    .reduce<Record<string, typeof liveSwitches>>((acc,[k,v]) => { acc[k]=v; return acc; }, {});
   const hasTypeGroups = Object.keys(switchesByType).length > 0;
 
   const onlineDevices = devices.filter(d => d.status === 'online').length;
@@ -65,8 +76,9 @@ const Master = () => {
 
   // Build device-based grouping for block/floor and labs
   const deviceMeta = devices.map(d => ({ device: d, meta: parseLocation(d.location) }));
-  const labsMap: Record<string, typeof allSwitches> = {};
-  const blockFloorMap: Record<string, typeof allSwitches> = {};
+  type SwitchShape = typeof liveSwitches[number];
+  const labsMap: Record<string, SwitchShape[]> = {};
+  const blockFloorMap: Record<string, SwitchShape[]> = {};
 
   deviceMeta.forEach(({ device, meta }) => {
     const deviceSwitches = device.switches.map(sw => ({
@@ -167,6 +179,7 @@ const Master = () => {
           activeSwitches={activeSwitches}
           offlineDevices={devices.filter(d => d.status !== 'online').length}
           onMasterToggle={handleMasterToggle}
+          isBusy={false}
         />
 
         {/* Summary Stats */}
@@ -180,8 +193,11 @@ const Master = () => {
             <span className="text-xl font-semibold">{offlineDevices}</span>
           </div>
             <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">Switches On</span>
+              <span className="text-xs uppercase tracking-wide text-muted-foreground">Live Switches On</span>
               <span className="text-xl font-semibold">{activeSwitches}</span>
+              {offlineActiveSwitches > 0 && (
+                <span className="text-[10px] mt-1 text-muted-foreground">+{offlineActiveSwitches} offline last-known on</span>
+              )}
             </div>
             <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
               <span className="text-xs uppercase tracking-wide text-muted-foreground">Switches Off</span>
@@ -208,6 +224,7 @@ const Master = () => {
                   }
                 };
                 const label = `${type.charAt(0).toUpperCase()+type.slice(1)}s`;
+                const onlineInGroup = switches.some(sw => sw.deviceStatus === 'online');
                 return (
                   <Card key={type} className="glass">
                     <CardHeader className="pb-3">
@@ -226,6 +243,7 @@ const Master = () => {
                           variant={allOn ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => handleTypeToggle(type, !allOn)}
+                          disabled={!onlineInGroup}
                         >
                           {allOn ? 'Turn Off' : 'Turn On'}
                         </Button>
@@ -248,6 +266,7 @@ const Master = () => {
               const activeCount = switches.filter(sw => sw.state).length;
               const total = switches.length;
               const allOn = activeCount === total && total > 0;
+              const anyOnline = switches.some(sw => sw.deviceStatus === 'online');
               return (
                 <Card key={key} className="glass">
                   <CardHeader className="pb-3">
@@ -267,7 +286,7 @@ const Master = () => {
                         variant={allOn ? 'default' : 'outline'}
                         size="sm"
                         onClick={() => handleBlockFloorToggle(block, floor, !allOn)}
-                        disabled={total === 0}
+                        disabled={total === 0 || !anyOnline}
                       >
                         {allOn ? 'Turn Off' : 'Turn On'}
                       </Button>
@@ -289,6 +308,7 @@ const Master = () => {
                 const activeCount = switches.filter(sw => sw.state).length;
                 const total = switches.length;
                 const allOn = activeCount === total && total > 0;
+                const anyOnline = switches.some(sw => sw.deviceStatus === 'online');
                 return (
                   <Card key={labLocation} className="glass">
                     <CardHeader className="pb-3">
@@ -308,7 +328,7 @@ const Master = () => {
                           variant={allOn ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => handleLabToggle(labLocation, !allOn)}
-                          disabled={total === 0}
+                          disabled={total === 0 || !anyOnline}
                         >
                           {allOn ? 'Turn Off' : 'Turn On'}
                         </Button>

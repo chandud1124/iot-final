@@ -1,4 +1,6 @@
-
+// Legacy sketch disabled to avoid conflicts with websocket_example.cpp.
+// If you intend to use this file, remove the #if 0 and ensure only one main is compiled.
+#if 0
 #include <WiFi.h>
 #include <WebSocketsClient.h>
 #include <ArduinoJson.h>
@@ -27,41 +29,89 @@ const char* websocketHost = WEBSOCKET_HOST;
 const int websocketPort = WEBSOCKET_PORT;
 const char* websocketPath = WEBSOCKET_PATH;
 
+// Helper: locate switch index by gpio
+int findSwitchIndexByGpio(int gpio) {
+  for (int i = 0; i < config.numSwitches; i++) {
+    if (config.switches[i].gpio == gpio) return i;
+  }
+  return -1;
+}
+
+void emitSwitchResult(int gpio, bool requested, bool success, const char* reason = nullptr) {
+  DynamicJsonDocument doc(256);
+  doc["type"] = "switch_result";
+  doc["gpio"] = gpio;
+  doc["success"] = success;
+  doc["requestedState"] = requested;
+  if (success) {
+    int idx = findSwitchIndexByGpio(gpio);
+    if (idx >= 0) doc["actualState"] = switchStates[idx];
+  } else {
+    doc["reason"] = reason ? reason : "failed";
+  }
+  String json; serializeJson(doc, json);
+  webSocket.sendTXT(json);
+}
+
+void applySwitchGpio(int gpio, bool state, bool requestedFromServer = true) {
+  int idx = findSwitchIndexByGpio(gpio);
+  if (idx < 0) {
+    Serial.printf("[switch] Unknown gpio %d\n", gpio);
+    emitSwitchResult(gpio, state, false, "unknown_gpio");
+    return;
+  }
+  bool prev = switchStates[idx];
+  switchStates[idx] = state;
+  digitalWrite(config.switches[idx].gpio, state ? HIGH : LOW);
+  if (prev != state) {
+    Serial.printf("[switch] GPIO %d -> %s\n", gpio, state ? "ON" : "OFF");
+    sendStateUpdate();
+  }
+  if (requestedFromServer) emitSwitchResult(gpio, state, true);
+}
+
 void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
-    switch(type) {
-        case WStype_DISCONNECTED:
-            Serial.println("Disconnected from WebSocket!");
-            break;
-        case WStype_CONNECTED:
-            {
-                Serial.println("Connected to WebSocket server");
-                // Send authentication with MAC address
-                DynamicJsonDocument doc(200);
-                doc["type"] = "authenticate";
-                doc["macAddress"] = WiFi.macAddress();
-                String json;
-                serializeJson(doc, json);
-                webSocket.sendTXT(json);
-            }
-            break;
-        case WStype_TEXT:
-            {
-                DynamicJsonDocument doc(1024);
-                DeserializationError error = deserializeJson(doc, payload);
-                if (error) {
-                    Serial.println("JSON parsing failed!");
-                    return;
-                }
-                
-                String type = doc["type"].as<String>();
-                if (type == "switch_command") {
-                    int switchId = doc["switchId"].as<int>();
-                    bool state = doc["state"].as<bool>();
-                    updateSwitchState(switchId, state);
-                }
-            }
-            break;
+  switch(type) {
+    case WStype_DISCONNECTED:
+      Serial.println("Disconnected from WebSocket!");
+      break;
+    case WStype_CONNECTED: {
+      Serial.println("Connected to WebSocket server");
+      DynamicJsonDocument doc(200);
+      doc["type"] = "authenticate"; // backend accepts 'authenticate'
+      doc["macAddress"] = WiFi.macAddress();
+      String json; serializeJson(doc, json);
+      webSocket.sendTXT(json);
+      // Immediately publish current state snapshot
+      sendStateUpdate();
+      break;
     }
+    case WStype_TEXT: {
+      DynamicJsonDocument doc(1024);
+      DeserializationError error = deserializeJson(doc, payload, length);
+      if (error) {
+        Serial.println("JSON parsing failed!");
+        return;
+      }
+      const char* mtype = doc["type"] | "";
+      if (strcmp(mtype, "switch_command") == 0) {
+        // Backend sends gpio & state
+        int gpio = doc["gpio"] | -1;
+        bool state = doc["state"] | false;
+        if (gpio == -1) {
+          Serial.println("[switch_command] missing gpio");
+          return;
+        }
+        applySwitchGpio(gpio, state, true);
+      } else if (strcmp(mtype, "config_update") == 0) {
+        updateConfig(doc);
+        Serial.println("[config_update] applied new configuration");
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 
 // State variables
@@ -117,60 +167,58 @@ void updateConfig(const JsonDocument& doc) {
     if (doc.containsKey("pirAutoOffDelay")) {
         config.pirAutoOffDelay = doc["pirAutoOffDelay"].as<uint16_t>();
     }
-    if (doc.containsKey("switches")) {
-        JsonArray switches = doc["switches"];
-        config.numSwitches = min((size_t)MAX_SWITCHES, switches.size());
-        
-        for (size_t i = 0; i < config.numSwitches; i++) {
-            JsonObject sw = switches[i];
-            strlcpy(config.switches[i].name, sw["name"] | "", SWITCH_NAME_LENGTH);
-            config.switches[i].gpio = sw["gpio"] | 0;
-            strlcpy(config.switches[i].type, sw["type"] | "relay", 16);
-        }
+  if (doc.containsKey("switches")) {
+    JsonArray switches = doc["switches"];
+    config.numSwitches = min((size_t)MAX_SWITCHES, switches.size());
 
-        // Reallocate state array
-        if (switchStates != nullptr) {
-            delete[] switchStates;
-        }
-        switchStates = new bool[config.numSwitches]();
+    // Reallocate state array first
+    if (switchStates != nullptr) {
+      delete[] switchStates;
     }
+    switchStates = new bool[config.numSwitches]();
+
+    for (size_t i = 0; i < config.numSwitches; i++) {
+      JsonObject sw = switches[i];
+      strlcpy(config.switches[i].name, sw["name"] | "", SWITCH_NAME_LENGTH);
+      // Prefer relayGpio from backend if provided, fallback to gpio
+      int gpio = sw.containsKey("relayGpio") ? (int)sw["relayGpio"].as<int>() : (int)(sw["gpio"] | 0);
+      config.switches[i].gpio = (uint8_t)gpio;
+      strlcpy(config.switches[i].type, sw["type"] | "relay", 16);
+      // Apply initial state from config if present
+      bool st = sw.containsKey("state") ? sw["state"].as<bool>() : false;
+      switchStates[i] = st;
+    }
+  }
     
     saveConfig();
-    initializePins();
+  // Initialize pins and drive outputs to current switchStates using relay polarity
+  for (size_t i = 0; i < config.numSwitches; i++) {
+    pinMode(config.switches[i].gpio, OUTPUT);
+    bool st = (i < config.numSwitches) ? switchStates[i] : false;
+  digitalWrite(config.switches[i].gpio, st ? HIGH : LOW);
+  }
 }
 
 void updateSwitch(int index, bool state) {
     if (index >= 0 && index < config.numSwitches) {
         switchStates[index] = state;
-        digitalWrite(config.switches[index].gpio, state ? HIGH : LOW);
+  digitalWrite(config.switches[index].gpio, state ? HIGH : LOW);
         sendStateUpdate();
     }
 }
 
 void sendStateUpdate() {
-    DynamicJsonDocument doc(1024);
-    JsonArray switchArray = doc.createNestedArray("switches");
-    
-    for (size_t i = 0; i < config.numSwitches; i++) {
-        JsonObject switchObj = switchArray.createNestedObject();
-        switchObj["name"] = config.switches[i].name;
-        switchObj["gpio"] = config.switches[i].gpio;
-        switchObj["type"] = config.switches[i].type;
-        switchObj["state"] = switchStates[i];
-    }
-    
-    if (config.pirEnabled) {
-        doc["pirState"]["enabled"] = true;
-        doc["pirState"]["gpio"] = config.pirGpio;
-        doc["pirState"]["triggered"] = digitalRead(config.pirGpio) == HIGH;
-        doc["pirState"]["autoOffDelay"] = config.pirAutoOffDelay;
-    } else {
-        doc["pirState"]["enabled"] = false;
-    }
-    
-    String json;
-    serializeJson(doc, json);
-    webSocket.sendTXT(json);
+  DynamicJsonDocument doc(1024);
+  doc["type"] = "state_update"; // required by backend
+  doc["mac"] = WiFi.macAddress();
+  JsonArray switchArray = doc.createNestedArray("switches");
+  for (size_t i = 0; i < config.numSwitches; i++) {
+    JsonObject switchObj = switchArray.createNestedObject();
+    switchObj["gpio"] = config.switches[i].gpio;
+    switchObj["state"] = switchStates[i];
+  }
+  String json; serializeJson(doc, json);
+  webSocket.sendTXT(json);
 }
 
 void checkPirSensor() {
@@ -196,12 +244,14 @@ void checkPirSensor() {
         // Auto-off timer will be handled by the backend
     }
 }
+#endif
 
 void initializePins() {
     // Initialize switch pins
     for (size_t i = 0; i < config.numSwitches; i++) {
         pinMode(config.switches[i].gpio, OUTPUT);
-        digitalWrite(config.switches[i].gpio, LOW);  // Start with all switches off
+  // Start with all switches OFF -> LOW
+  digitalWrite(config.switches[i].gpio, LOW);
     }
 
     // Initialize PIR sensor if enabled
@@ -234,6 +284,7 @@ void setup() {
     Serial.println(WiFi.localIP());
     Serial.print("MAC Address: ");
     Serial.println(WiFi.macAddress());
+    Serial.printf("[INIT] Backend target ws://%s:%d%s\n", BACKEND_HOST, BACKEND_PORT, WS_PATH);
     
     // Setup WebSocket connection
     setupWebSocket();
@@ -287,6 +338,18 @@ void loop() {
     if (millis() - lastHeartbeat > HEARTBEAT_INTERVAL) {
         sendHeartbeat();
         lastHeartbeat = millis();
+    }
+    static unsigned long lastStatus = 0;
+    if (millis() - lastStatus > 5000) {
+      lastStatus = millis();
+      Serial.printf("[STATUS] WiFi=%s RSSI=%d WS=%s identified=%d switches=%u\n",
+                    WiFi.status()==WL_CONNECTED?"OK":"DOWN", WiFi.RSSI(), ws.isConnected()?"CONNECTED":"DISCONNECTED", identified, (unsigned)switchesLocal.size());
+      if (!ws.isConnected()) {
+        // Library auto reconnects; we just note it
+        Serial.println("[STATUS] Waiting for WebSocket connection...");
+      } else if (!identified) {
+        Serial.println("[STATUS] Connected but not identified yet (will retry)");
+      }
     }
 }
 
@@ -614,7 +677,7 @@ void checkManualSwitches() {
       if (currentState) {
         // Manual switch pressed - toggle relay
         relayStates[i] = !relayStates[i];
-        digitalWrite(RELAY_PINS[i], relayStates[i] ? HIGH : LOW);
+  digitalWrite(RELAY_PINS[i], relayStates[i] ? HIGH : LOW);
         
         // Send update to server
         sendSwitchStateUpdate(i);

@@ -47,6 +47,23 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
     timeoutMinutes: schedule?.timeoutMinutes || 480 // 8 hours default for classroom
   });
 
+  // Keep form in sync when editing a schedule
+  React.useEffect(() => {
+    if (schedule && open) {
+      setFormData({
+        name: schedule.name || '',
+        time: schedule.time || '09:00',
+        action: schedule.action || 'on',
+        days: Array.isArray(schedule.days) ? schedule.days : [],
+        switches: Array.isArray(schedule.switches) ? schedule.switches : [],
+        timeoutMinutes: schedule.timeoutMinutes || 480
+      });
+    } else if (!open && !schedule) {
+      // Reset when closing after adding
+      setFormData({ name: '', time: '09:00', action: 'on', days: [], switches: [], timeoutMinutes: 480 });
+    }
+  }, [schedule, open]);
+
   const allSwitches = devices.flatMap(device => 
     device.switches.map(sw => ({
       id: `${device.id}-${sw.id}`,

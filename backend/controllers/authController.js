@@ -1,5 +1,6 @@
 
 const jwt = require('jsonwebtoken');
+const mongoose = require('mongoose');
 const crypto = require('crypto');
 const User = require('../models/User');
 const ActivityLog = require('../models/ActivityLog');
@@ -51,6 +52,10 @@ const register = async (req, res) => {
 
 const login = async (req, res) => {
   try {
+    // Fail fast if DB is not connected to avoid long buffering timeouts
+    if (mongoose.connection.readyState !== 1) {
+      return res.status(503).json({ message: 'Database unavailable', error: 'DB_NOT_CONNECTED' });
+    }
     // Normalize email
     const emailRaw = req.body.email || '';
     const email = emailRaw.trim().toLowerCase();

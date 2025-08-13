@@ -1,3 +1,5 @@
+// Disabled alternate sketch (using websocket_example.cpp instead)
+#if 0
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -56,6 +58,7 @@ void setup() {
     registerDevice();
   }
 }
+#endif
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {

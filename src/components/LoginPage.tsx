@@ -40,10 +40,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLogin }) => {
         description: `Welcome back, ${user.name}!`
       });
     } catch (error: any) {
-      setError(error.response?.data?.message || 'Login failed');
+      const status = error?.response?.status;
+      const code = error?.response?.data?.error;
+      if (status === 503 || code === 'DB_NOT_CONNECTED') {
+        setError('Server is starting up (database unavailable). Please try again in a few seconds.');
+      } else {
+        setError(error.response?.data?.message || 'Login failed');
+      }
       toast({
         title: "Login Failed",
-        description: error.response?.data?.message || 'Invalid credentials',
+        description: status === 503 || code === 'DB_NOT_CONNECTED' ? 'Backend database is not ready yet. Try again shortly.' : (error.response?.data?.message || 'Invalid credentials'),
         variant: "destructive"
       });
     } finally {

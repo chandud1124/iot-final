@@ -3,8 +3,8 @@
 #define CONFIG_H
 
 // WiFi Configuration
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID "I am Not A Witch I am Your Wifi"
+#define WIFI_PASSWORD "Whoareu@0000"
 
 // Server Configuration
 #define WEBSOCKET_HOST "192.168.1.100"  // Replace with your computer's IP address
@@ -22,7 +22,7 @@
 
 // EEPROM Configuration
 #define EEPROM_SIZE 512
-#define CONFIG_VERSION 1  // Increment this when changing config structure
+#define CONFIG_VERSION 2  // Incremented to invalidate old stored config
 
 // Switch Configuration
 #define MAX_SWITCHES 8

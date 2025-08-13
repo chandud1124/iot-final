@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { ToggleLeft, ToggleRight, Zap, Radar } from 'lucide-react';
+import { ToggleLeft, ToggleRight, Zap, Radar, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 import { Switch as DeviceSwitch } from '@/types';
@@ -31,6 +31,9 @@ export const SwitchControl: React.FC<SwitchControlProps> = ({
     }
   };
 
+  // Pending hint (set by useDevices on switch_intent)
+  const anySwitch: any = switchData as any;
+  const isPending = !!anySwitch._pending;
   return (
     <Button
       variant="ghost"
@@ -60,20 +63,22 @@ export const SwitchControl: React.FC<SwitchControlProps> = ({
         </div>
         
         <div className="transition-transform duration-200">
-          {disabled ? (
+      {disabled ? (
             <div className="flex items-center gap-2 opacity-70">
               <ToggleLeft className="w-8 h-8 text-gray-400" />
               <span className="text-sm font-bold text-gray-500">OFFLINE</span>
             </div>
           ) : switchData.state ? (
               <div className="flex items-center gap-2">
-                <ToggleRight className="w-8 h-8 text-green-500" />
-                <span className="text-sm font-bold text-green-600">ON</span>
+        <ToggleRight className="w-8 h-8 text-green-500" />
+        <span className="text-sm font-bold text-green-600">ON</span>
+        {isPending && <Loader2 className="w-4 h-4 text-green-500 animate-spin" />}
               </div>
             ) : (
               <div className="flex items-center gap-2">
-                <ToggleLeft className="w-8 h-8 text-red-400" />
-                <span className="text-sm font-bold text-red-500">OFF</span>
+        <ToggleLeft className="w-8 h-8 text-red-400" />
+        <span className="text-sm font-bold text-red-500">OFF</span>
+        {isPending && <Loader2 className="w-4 h-4 text-red-400 animate-spin" />}
               </div>
             )}
         </div>

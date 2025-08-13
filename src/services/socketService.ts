@@ -6,10 +6,15 @@ class SocketService {
   private listeners: Map<string, Set<Function>> = new Map();
 
   constructor() {
-    const RAW_SOCKET_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
-    const SOCKET_URL = RAW_SOCKET_URL.includes('30011')
-      ? RAW_SOCKET_URL.replace('30011', '3001')
-      : RAW_SOCKET_URL;
+  const RAW_SOCKET_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001';
+    // If env base includes /api (used for REST), strip it for Socket.IO root namespace
+    let derived = RAW_SOCKET_URL.replace(/\/$/, '');
+    if (/\/api$/.test(derived)) {
+      derived = derived.replace(/\/api$/, '');
+    }
+    const SOCKET_URL = derived.includes('30011')
+      ? derived.replace('30011', '3001')
+      : derived;
     if (SOCKET_URL !== RAW_SOCKET_URL) {
       // eslint-disable-next-line no-console
       console.warn('[socket] Overriding outdated socket URL', RAW_SOCKET_URL, '->', SOCKET_URL);
@@ -17,29 +22,53 @@ class SocketService {
     
   // Connect to base namespace now that /test service removed
   this.socket = io(`${SOCKET_URL}`, {
-      transports: ['websocket'],
+      transports: ['polling'],
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
-      reconnectionAttempts: Infinity
+      reconnectionAttempts: Infinity,
+      timeout: 10000,
+      forceNew: false,
+      upgrade: false,
+      path: '/socket.io'
     });
+
+    // Quick version / debug info
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const pkg = require('socket.io-client/package.json');
+      // eslint-disable-next-line no-console
+      console.log(`[socket] client version ${pkg.version} connecting to ${SOCKET_URL}`);
+    } catch {/* ignore */}
 
     this.setupDefaultListeners();
   }
 
   private setupDefaultListeners() {
     this.socket?.on('connect', () => {
-      console.log('Socket connected');
+      console.log('Socket connected (transport=' + (this.socket as any)?.io?.engine?.transport?.name + ')');
       this.emit('client_connected', { timestamp: new Date() });
+  // Intentionally keep polling only (manual upgrade disabled)
+  console.log('[socket] staying on polling transport (manual upgrade disabled)');
     });
 
-    this.socket?.on('disconnect', () => {
-      console.log('Socket disconnected');
+    this.socket?.on('connect_error', (err) => {
+      console.warn('[socket] connect_error', err.message, 'transport=', (this.socket as any)?.io?.engine?.transport?.name);
+    });
+
+    this.socket?.on('disconnect', (reason) => {
+      console.log('Socket disconnected', reason);
+    });
+    (this.socket?.io as any).on('reconnect_attempt', (attempt: number) => {
+      console.log('[socket] reconnect_attempt', attempt);
+    });
+    this.socket?.on('close', (desc: any) => {
+      console.log('[socket] close event', desc);
     });
 
     this.socket?.on('error', (error) => {
-      console.error('Socket error:', error);
+      console.error('Socket error:', error, 'transport=', (this.socket as any)?.io?.engine?.transport?.name);
     });
   }
 
@@ -98,6 +127,10 @@ class SocketService {
     });
     this.listeners.clear();
     this.socket?.disconnect();
+  }
+
+  public isConnected(): boolean {
+    return !!this.socket?.connected;
   }
 }
 
