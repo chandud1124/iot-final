@@ -1,8 +1,14 @@
 {
 	"version": 2,
-	"routes": [
-		{ "handle": "filesystem" },
-		{ "src": "/(.*)", "dest": "/index.html" }
+	"rewrites": [
+		{
+			"source": "/api/:path*",
+			"destination": "https://smart-classroom-1wus.onrender.com/api/:path*"
+		},
+		{
+			"source": "/(.*)",
+			"destination": "/"
+		}
 	]
 }
 
