@@ -151,7 +151,13 @@ function parseAllowedOrigins() {
       const regex = new RegExp('^' + (hasProto ? 'https?:\\/\\/' : proto) + reHost + '$', 'i');
       patterns.push(regex);
     } else {
-      exact.add(p);
+      // Exact entry: if protocol is missing, accept both http and https variants
+      if (/^https?:\/\//i.test(p)) {
+        exact.add(p);
+      } else {
+        exact.add(`http://${p}`);
+        exact.add(`https://${p}`);
+      }
     }
   }
   return { exact, patterns };
