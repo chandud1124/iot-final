@@ -117,7 +117,12 @@ const server = http.createServer(app);
 // FRONTEND_URLS: comma-separated list, exact origins or patterns like
 //   https://smartclassroom-lake.vercel.app, https://*.vercel.app
 // FRONTEND_URL: single origin (legacy)
-const devOrigins = ['http://localhost:5173','http://localhost:5174','http://localhost:5175'];
+const devOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'https://smartclassroom-chandus-projects-0793be70.vercel.app'
+];
 function parseAllowedOrigins() {
   if (process.env.NODE_ENV !== 'production') return { exact: new Set(devOrigins), patterns: [] };
   const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
