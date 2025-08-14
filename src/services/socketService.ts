@@ -33,10 +33,16 @@ class SocketService {
       // eslint-disable-next-line no-console
       console.warn('[socket] Overriding outdated socket URL', RAW_SOCKET_URL, '->', SOCKET_URL);
     }
-    
-  // Connect to base namespace now that /test service removed
-  this.socket = io(`${SOCKET_URL}`, {
-      transports: ['polling'],
+    // In production, prefer direct WebSocket to avoid CORS-sensitive polling; keep polling in local dev
+    let useWebSocketOnly = false;
+    try {
+      const host = window?.location?.hostname || '';
+      useWebSocketOnly = host && !/^(localhost|127\.0\.0\.1)$/i.test(host);
+    } catch { /* ignore */ }
+
+    // Connect to base namespace now that /test service removed
+    this.socket = io(`${SOCKET_URL}`, {
+      transports: useWebSocketOnly ? ['websocket'] : ['polling'],
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
@@ -44,6 +50,7 @@ class SocketService {
       reconnectionAttempts: Infinity,
       timeout: 10000,
       forceNew: false,
+      // When websocket only, no upgrade is needed; keep disabled for consistency
       upgrade: false,
       path: '/socket.io'
     });
@@ -63,8 +70,13 @@ class SocketService {
     this.socket?.on('connect', () => {
       console.log('Socket connected (transport=' + (this.socket as any)?.io?.engine?.transport?.name + ')');
       this.emit('client_connected', { timestamp: new Date() });
-  // Intentionally keep polling only (manual upgrade disabled)
-  console.log('[socket] staying on polling transport (manual upgrade disabled)');
+      // Log the chosen transport mode for visibility
+      const tr = (this.socket as any)?.io?.engine?.transport?.name;
+      if (tr === 'websocket') {
+        console.log('[socket] using direct websocket transport');
+      } else {
+        console.log('[socket] staying on polling transport (manual upgrade disabled)');
+      }
     });
 
     this.socket?.on('connect_error', (err) => {
