@@ -168,7 +168,6 @@ const SOCKET_IO_ALLOW_ALL = process.env.SOCKET_IO_ALLOW_ALL_ORIGINS === '1';
 function isOriginAllowed(origin) {
   if (!origin) return true; // non-CORS or same-origin
   if (CORS_ALLOW_ALL) return true; // global override
-  if (process.env.NODE_ENV !== 'production') return allowed.exact.has(origin);
   if (allowed.exact.has(origin)) return true;
   return allowed.patterns.some(re => re.test(origin));
 }
