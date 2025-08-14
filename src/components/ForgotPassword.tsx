@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { authAPI } from "@/services/api";
 
 const ForgotPassword = () => {
   const [email, setEmail] = useState('');
@@ -16,34 +17,20 @@ const ForgotPassword = () => {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/forgot-password`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
+      await authAPI.forgotPassword(email);
+      
+      {
         toast({
           title: "Success",
           description: "If the email is registered with us, you will receive password reset instructions",
         });
         navigate('/login');
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: data.message || "Something went wrong",
-        });
       }
     } catch (error) {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "An error occurred. Please try again later.",
+        description: error?.message || "An error occurred. Please try again later.",
       });
     } finally {
       setIsSubmitting(false);

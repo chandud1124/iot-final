@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { authAPI } from "@/services/api";
 
 const ResetPassword = () => {
   const [password, setPassword] = useState('');
@@ -28,28 +29,14 @@ const ResetPassword = () => {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/reset-password/${resetToken}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ password }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
+      await authAPI.resetPassword(String(resetToken), password);
+      
+      {
         toast({
           title: "Success",
           description: "Your password has been reset successfully",
         });
         navigate('/login');
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: data.message || "Something went wrong",
-        });
       }
     } catch (error) {
       toast({
