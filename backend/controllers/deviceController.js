@@ -16,6 +16,30 @@ const ActivityLog = require('../models/ActivityLog');
 const SecurityAlert = require('../models/SecurityAlert');
 // Access io via req.app.get('io') where needed instead of legacy socketService
 
+// Small helper to stagger hardware commands to avoid MCU/relay glitches under burst load
+function sendStaggeredCommands(ws, mac, payloads, io, deviceId, baseDelayMs = 40) {
+  if (!ws || ws.readyState !== 1) return;
+  payloads.forEach((payload, idx) => {
+    setTimeout(() => {
+      try {
+        ws.send(JSON.stringify(payload));
+        if (io && deviceId) {
+          io.emit('bulk_switch_progress', {
+            deviceId,
+            mac,
+            gpio: payload.gpio,
+            desiredState: payload.state,
+            seq: payload.seq,
+            ts: Date.now()
+          });
+        }
+      } catch (e) {
+        try { logger.warn('[hw] sendStaggeredCommands send failed', { mac, err: e.message }); } catch {}
+      }
+    }, idx * baseDelayMs);
+  });
+}
+
 const getAllDevices = async (req, res) => {
   try {
     let query = {};
@@ -715,23 +739,25 @@ const bulkToggleSwitches = async (req, res) => {
         }
         // NOTE: Do NOT emit device_state_changed here. We'll wait for ESP32 confirmations
         // via switch_result/state_update to avoid UI desync.
-        // Push commands to ESP32 (raw WS) so physical relays change immediately
-    try {
-      if (global.wsDevices && device.macAddress) {
-        const ws = global.wsDevices.get(device.macAddress.toUpperCase());
-        if (ws && ws.readyState === 1) {
-          for (const sw of device.switches) {
-            const payload = { type:'switch_command', mac: device.macAddress, gpio: sw.relayGpio || sw.gpio, state: sw.state, seq: nextCmdSeq(device.macAddress) };
-            try {
-              logger.info('[hw] switch_command (bulk) push', { mac: device.macAddress, gpio: payload.gpio, state: payload.state, deviceId: device._id.toString() });
-            } catch {}
-            ws.send(JSON.stringify(payload));
+        // Push commands to ESP32 (raw WS) with slight staggering to avoid glitches
+        try {
+          if (global.wsDevices && device.macAddress) {
+            const ws = global.wsDevices.get(device.macAddress.toUpperCase());
+            if (ws && ws.readyState === 1) {
+              const payloads = device.switches.map(sw => ({
+                type: 'switch_command',
+                mac: device.macAddress,
+                gpio: sw.relayGpio || sw.gpio,
+                state: sw.state,
+                seq: nextCmdSeq(device.macAddress)
+              }));
+              try { logger.info('[hw] bulk switch_command (staggered)', { mac: device.macAddress, count: payloads.length }); } catch {}
+              sendStaggeredCommands(ws, device.macAddress, payloads, req.app.get('io'), device._id.toString());
+            }
           }
+        } catch (e) {
+          if (process.env.NODE_ENV !== 'production') console.warn('[bulkToggleSwitches push failed]', e.message);
         }
-      }
-    } catch (e) {
-      if (process.env.NODE_ENV !== 'production') console.warn('[bulkToggleSwitches push failed]', e.message);
-    }
       }
     }
 
@@ -792,15 +818,16 @@ const bulkToggleByType = async (req, res) => {
           });
         } catch {}
         // Do NOT emit device_state_changed here; wait for hardware confirmation
-        // Push commands to ESP32 so physical relays reflect type-based bulk change
+        // Push commands to ESP32 (staggered) for type-based bulk
         try {
           if (global.wsDevices && device.macAddress) {
             const ws = global.wsDevices.get(device.macAddress.toUpperCase());
             if (ws && ws.readyState === 1) {
-              for (const sw of device.switches.filter(sw => sw.type === type)) {
-                const payload = { type:'switch_command', mac: device.macAddress, gpio: sw.relayGpio || sw.gpio, state: sw.state, seq: nextCmdSeq(device.macAddress) };
-                ws.send(JSON.stringify(payload));
-              }
+              const selected = device.switches.filter(sw => sw.type === type);
+              const payloads = selected.map(sw => ({
+                type: 'switch_command', mac: device.macAddress, gpio: sw.relayGpio || sw.gpio, state: sw.state, seq: nextCmdSeq(device.macAddress)
+              }));
+              sendStaggeredCommands(ws, device.macAddress, payloads, req.app.get('io'), device._id.toString());
             }
           }
         } catch (e) { if (process.env.NODE_ENV !== 'production') console.warn('[bulkToggleByType push failed]', e.message); }
@@ -854,15 +881,15 @@ const bulkToggleByLocation = async (req, res) => {
           });
         } catch {}
         // Do NOT emit device_state_changed here; wait for hardware confirmation
-        // Push commands to ESP32 so physical relays reflect location-based bulk change
+        // Push commands to ESP32 (staggered) for location-based bulk
         try {
           if (global.wsDevices && device.macAddress) {
             const ws = global.wsDevices.get(device.macAddress.toUpperCase());
             if (ws && ws.readyState === 1) {
-              for (const sw of device.switches) {
-                const payload = { type:'switch_command', mac: device.macAddress, gpio: sw.relayGpio || sw.gpio, state: sw.state, seq: nextCmdSeq(device.macAddress) };
-                ws.send(JSON.stringify(payload));
-              }
+              const payloads = device.switches.map(sw => ({
+                type: 'switch_command', mac: device.macAddress, gpio: sw.relayGpio || sw.gpio, state: sw.state, seq: nextCmdSeq(device.macAddress)
+              }));
+              sendStaggeredCommands(ws, device.macAddress, payloads, req.app.get('io'), device._id.toString());
             }
           }
         } catch (e) { if (process.env.NODE_ENV !== 'production') console.warn('[bulkToggleByLocation push failed]', e.message); }
