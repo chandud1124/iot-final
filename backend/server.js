@@ -133,7 +133,8 @@ const prodFallbackOrigins = [
 // Explicit extra origins to always allow (common Vercel preview/branch URLs for this project)
 const extraAllowedOrigins = [
   'https://smartclassroom-kc32ow0jz-chandus-projects-0793be70.vercel.app',
-  'https://smartclassroom-git-main-chandus-projects-0793be70.vercel.app'
+  'https://smartclassroom-git-main-chandus-projects-0793be70.vercel.app',
+  'https://smartclassroom-lake.vercel.app'
 ];
 function parseAllowedOrigins() {
   // If env allowlist is provided, prefer it in all environments
@@ -402,17 +403,31 @@ const createAdminUser = async () => {
     const User = require('./models/User');
     const existingAdmin = await User.findOne({ role: 'admin' });
     if (!existingAdmin) {
-      // IMPORTANT: Provide the plain password here so the pre-save hook hashes it ONCE.
-      // Previously this code hashed manually AND the pre-save hook re-hashed, breaking login.
+      const adminEmail = process.env.ADMIN_EMAIL || 'admin@college.edu';
+      const adminPassword = process.env.ADMIN_PASSWORD; // do NOT fallback to a weak default
+
+      // In production, require ADMIN_PASSWORD to avoid insecure defaults
+      if (process.env.NODE_ENV === 'production' && !adminPassword) {
+        logger.warn('Default admin not created: set ADMIN_EMAIL and ADMIN_PASSWORD env vars to bootstrap an admin user.');
+        return;
+      }
+
+      if (!adminPassword) {
+        // In non-production environments, skip creation if no password is provided to avoid committing insecure defaults
+        logger.warn('Skipping default admin creation (no ADMIN_PASSWORD set). Provide ADMIN_PASSWORD to auto-create an admin user.');
+        return;
+      }
+
+      // IMPORTANT: Provide the plain password so the pre-save hook hashes it ONCE.
       await User.create({
         name: process.env.ADMIN_NAME || 'System Administrator',
-        email: process.env.ADMIN_EMAIL || 'admin@college.edu',
-        password: process.env.ADMIN_PASSWORD || 'admin123456',
+        email: adminEmail,
+        password: adminPassword,
         role: 'admin',
         department: 'IT Department',
         accessLevel: 'full'
       });
-      logger.info('Default admin user created (single-hash)');
+      logger.info('Default admin user created');
     }
   } catch (error) {
     logger.error('Error creating admin user:', error);
