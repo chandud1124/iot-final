@@ -413,7 +413,17 @@ void setup() {
   Serial.println("\nWiFi OK");
   setupRelays(); // safe: does nothing until config arrives
   if (STATUS_LED_PIN != 255) { pinMode(STATUS_LED_PIN, OUTPUT); digitalWrite(STATUS_LED_PIN, LOW); }
-  ws.begin(WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
+  #if USE_SECURE_WS
+    // Secure WebSocket (wss) on port 443
+    ws.beginSSL(WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
+    #if WS_INSECURE_TLS
+      ws.setInsecure(); // skip cert validation (use only if you can't bundle CA)
+    #endif
+    Serial.printf("[WS] begin wss://%s:%d%s\n", WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
+  #else
+    ws.begin(WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
+    Serial.printf("[WS] begin ws://%s:%d%s\n", WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
+  #endif
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(5000); // base interval; library uses backoff internally
   // Additional optional manual backoff example (uncomment to customize):

@@ -123,7 +123,16 @@ unsigned long lastHeartbeat = 0;
 const unsigned long HEARTBEAT_INTERVAL = 30000; // 30 seconds
 
 void setupWebSocket() {
-    webSocket.begin(websocketHost, websocketPort, websocketPath);
+    #if USE_SECURE_WS
+      webSocket.beginSSL(websocketHost, websocketPort, websocketPath);
+      #if WS_INSECURE_TLS
+        webSocket.setInsecure();
+      #endif
+      Serial.printf("[WS] begin wss://%s:%d%s\n", websocketHost, websocketPort, websocketPath);
+    #else
+      webSocket.begin(websocketHost, websocketPort, websocketPath);
+      Serial.printf("[WS] begin ws://%s:%d%s\n", websocketHost, websocketPort, websocketPath);
+    #endif
     webSocket.onEvent(webSocketEvent);
     webSocket.setReconnectInterval(5000);
 }
