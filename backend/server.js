@@ -124,9 +124,13 @@ const devOrigins = [
   'https://smartclassroom-chandus-projects-0793be70.vercel.app'
 ];
 function parseAllowedOrigins() {
-  if (process.env.NODE_ENV !== 'production') return { exact: new Set(devOrigins), patterns: [] };
+  // If env allowlist is provided, prefer it in all environments
   const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
   const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0 && process.env.NODE_ENV !== 'production') {
+    // No env allowlist provided; fall back to permissive dev origins
+    return { exact: new Set(devOrigins), patterns: [] };
+  }
   const exact = new Set();
   const patterns = [];
   for (const p of parts) {
