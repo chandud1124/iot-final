@@ -153,8 +153,11 @@ function parseAllowedOrigins() {
   return { exact, patterns };
 }
 const allowed = parseAllowedOrigins();
+const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL_ORIGINS === '1';
+const SOCKET_IO_ALLOW_ALL = process.env.SOCKET_IO_ALLOW_ALL_ORIGINS === '1';
 function isOriginAllowed(origin) {
   if (!origin) return true; // non-CORS or same-origin
+  if (CORS_ALLOW_ALL) return true; // global override
   if (process.env.NODE_ENV !== 'production') return allowed.exact.has(origin);
   if (allowed.exact.has(origin)) return true;
   return allowed.patterns.some(re => re.test(origin));
@@ -162,7 +165,8 @@ function isOriginAllowed(origin) {
 logger.info('[cors] allowed origins', {
   env: process.env.NODE_ENV,
   exact: Array.from(allowed.exact || []),
-  patterns: (allowed.patterns || []).map(r => r.toString())
+  patterns: (allowed.patterns || []).map(r => r.toString()),
+  overrides: { CORS_ALLOW_ALL, SOCKET_IO_ALLOW_ALL }
 });
 
 // Security middleware
@@ -215,6 +219,7 @@ const io = socketIo(server, {
   cors: {
     origin: (origin, callback) => {
       try {
+  if (SOCKET_IO_ALLOW_ALL) return callback(null, true);
   if (isOriginAllowed(origin)) return callback(null, true);
   logger.warn('[socket.io cors] blocked origin', { origin });
   return callback(new Error('Not allowed by CORS'));
@@ -233,6 +238,23 @@ io.engine.on('connection_error', (err) => {
     code: err.code,
     message: err.message,
     context: err.context
+  });
+});
+
+// CORS debug endpoint - helps verify whether an origin would be allowed
+app.get('/api/debug/cors', (req, res) => {
+  const q = (req.query.origin || '').toString();
+  const originHeader = req.headers.origin || '';
+  const testOrigin = q || originHeader;
+  const result = SOCKET_IO_ALLOW_ALL || CORS_ALLOW_ALL ? true : isOriginAllowed(testOrigin);
+  res.json({
+    env: process.env.NODE_ENV,
+    allowAll: CORS_ALLOW_ALL,
+    socketAllowAll: SOCKET_IO_ALLOW_ALL,
+    exact: Array.from(allowed.exact || []),
+    patterns: (allowed.patterns || []).map(r => r.toString()),
+    requestedOrigin: testOrigin || null,
+    allowed: result
   });
 });
 
