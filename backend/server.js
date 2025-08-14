@@ -130,14 +130,21 @@ const prodFallbackOrigins = [
   'https://smartclassroom-lake.vercel.app',
   'https://*.vercel.app'
 ];
+// Explicit extra origins to always allow (common Vercel preview/branch URLs for this project)
+const extraAllowedOrigins = [
+  'https://smartclassroom-kc32ow0jz-chandus-projects-0793be70.vercel.app',
+  'https://smartclassroom-git-main-chandus-projects-0793be70.vercel.app'
+];
 function parseAllowedOrigins() {
   // If env allowlist is provided, prefer it in all environments
   const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
   const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
   // Choose source list: env parts if provided, otherwise dev or conservative prod fallbacks
-  const sourceList = parts.length > 0
+  const sourceList = (parts.length > 0
     ? parts
-    : (process.env.NODE_ENV !== 'production' ? devOrigins : prodFallbackOrigins);
+    : (process.env.NODE_ENV !== 'production' ? devOrigins : prodFallbackOrigins))
+    // Always include explicit extras
+    .concat(extraAllowedOrigins);
   const exact = new Set();
   const patterns = [];
   for (const p of sourceList) {
