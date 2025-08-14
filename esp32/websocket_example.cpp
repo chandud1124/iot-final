@@ -20,6 +20,13 @@
 #include <ArduinoJson.h>
 #include <EEPROM.h>
 #include "config.h"
+// Ensure secure WS defaults if not provided by config.h
+#ifndef USE_SECURE_WS
+#define USE_SECURE_WS 1
+#endif
+#ifndef WS_INSECURE_TLS
+#define WS_INSECURE_TLS 1
+#endif
 // Uncomment to compile without mbedtls/HMAC (for older cores or minimal builds)
 // #define DISABLE_HMAC 1
 #ifndef DISABLE_HMAC
@@ -101,7 +108,9 @@ void identify() {
   DynamicJsonDocument doc(256);
   doc["type"] = "identify";
   doc["mac"] = WiFi.macAddress();
-  doc["secret"] = DEVICE_SECRET; // simple shared secret (upgrade to HMAC if needed)
+  if (strlen(DEVICE_SECRET) > 0) {
+    doc["secret"] = DEVICE_SECRET; // simple shared secret (optional)
+  }
   sendJson(doc);
   lastIdentifyAttempt = millis();
 }

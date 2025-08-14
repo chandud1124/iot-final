@@ -9,18 +9,18 @@
 // Server Configuration
 // For local dev: use your machine's LAN IP and port 3001 (ws)
 // For cloud (Render): use your Render hostname and port 443 (wss)
-#define WEBSOCKET_HOST "192.168.0.108"   // e.g., "smart-classroom-1wus.onrender.com"
-#define WEBSOCKET_PORT 3001               // 3001 for local ws, 443 for cloud wss
+#define WEBSOCKET_HOST "smart-classroom-1wus.onrender.com"   // e.g., "smart-classroom-1wus.onrender.com"
+#define WEBSOCKET_PORT 443               // 3001 for local ws, 443 for cloud wss
 // Raw WebSocket endpoint path (matches backend server.js)
 #define WEBSOCKET_PATH "/esp32-ws"
 
 // Secure WebSocket (wss) toggle. Set to 1 when connecting to cloud over TLS (port 443)
 #ifndef USE_SECURE_WS
-#define USE_SECURE_WS 0
+#define USE_SECURE_WS 1
 #endif
 // If you don't want to manage root CA, set to 1 to skip certificate validation (less secure)
 #ifndef WS_INSECURE_TLS
-#define WS_INSECURE_TLS 0
+#define WS_INSECURE_TLS 1
 #endif
 
 // Device Configuration
