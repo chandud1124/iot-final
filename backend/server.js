@@ -112,6 +112,54 @@ mongoose.connection.on('error', (err) => {
 const app = express();
 const server = http.createServer(app);
 
+// ----------------------------------------------------------------------------
+// CORS allowlist helpers (support multiple origins and wildcard patterns)
+// FRONTEND_URLS: comma-separated list, exact origins or patterns like
+//   https://smartclassroom-lake.vercel.app, https://*.vercel.app
+// FRONTEND_URL: single origin (legacy)
+const devOrigins = ['http://localhost:5173','http://localhost:5174','http://localhost:5175'];
+function parseAllowedOrigins() {
+  if (process.env.NODE_ENV !== 'production') return { exact: new Set(devOrigins), patterns: [] };
+  const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
+  const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
+  const exact = new Set();
+  const patterns = [];
+  for (const p of parts) {
+    if (p.includes('*')) {
+      // Convert wildcard to regex. Only allow wildcard in the hostname part for safety.
+      // Examples:
+      //  https://*.vercel.app  -> /^https:\/\/[^/.]+\.vercel\.app$/
+      //  *.example.com         -> /^https?:\/\/[^/.]+\.example\.com$/
+      let pattern = p;
+      // If protocol missing, allow http/https
+      const hasProto = /^https?:\/\//i.test(pattern);
+      const proto = hasProto ? '' : 'https?:\\/\\/';
+      pattern = pattern.replace(/^https?:\/\//i, '');
+      // Escape dots and slashes, then replace * with a single label wildcard
+      const reHost = pattern
+        .replace(/[.+?^${}()|\[\]\\]/g, r => '\\' + r)
+        .replace(/\*/g, '[^/.]+');
+      const regex = new RegExp('^' + (hasProto ? 'https?:\\/\\/' : proto) + reHost + '$', 'i');
+      patterns.push(regex);
+    } else {
+      exact.add(p);
+    }
+  }
+  return { exact, patterns };
+}
+const allowed = parseAllowedOrigins();
+function isOriginAllowed(origin) {
+  if (!origin) return true; // non-CORS or same-origin
+  if (process.env.NODE_ENV !== 'production') return allowed.exact.has(origin);
+  if (allowed.exact.has(origin)) return true;
+  return allowed.patterns.some(re => re.test(origin));
+}
+logger.info('[cors] allowed origins', {
+  env: process.env.NODE_ENV,
+  exact: Array.from(allowed.exact || []),
+  patterns: (allowed.patterns || []).map(r => r.toString())
+});
+
 // Security middleware
 app.use(helmet({
   contentSecurityPolicy: false,
@@ -121,12 +169,8 @@ app.use(helmet({
 // Manual preflight handler (before cors) to guarantee PATCH visibility
 app.use((req, res, next) => {
   if (req.method === 'OPTIONS') {
-    const devOrigins = ['http://localhost:5173','http://localhost:5174','http://localhost:5175'];
-    const allowedOrigins = process.env.NODE_ENV === 'production'
-      ? [process.env.FRONTEND_URL || 'https://your-frontend-domain.com']
-      : devOrigins;
     const origin = req.headers.origin;
-    if (origin && allowedOrigins.includes(origin)) {
+    if (origin && isOriginAllowed(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
     }
@@ -141,9 +185,15 @@ app.use((req, res, next) => {
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.NODE_ENV === 'production' 
-    ? [process.env.FRONTEND_URL || 'https://your-frontend-domain.com']
-    : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
+  origin: (origin, callback) => {
+    try {
+  if (isOriginAllowed(origin)) return callback(null, true);
+  logger.warn('[cors] blocked origin', { origin });
+  return callback(new Error('Not allowed by CORS'));
+    } catch (e) {
+      return callback(e);
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -158,9 +208,13 @@ app.use(express.urlencoded({ extended: true }));
 // Initialize main Socket.IO instance
 const io = socketIo(server, {
   cors: {
-    origin: process.env.NODE_ENV === 'production'
-      ? [process.env.FRONTEND_URL || 'https://your-frontend-domain.com']
-      : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175'],
+    origin: (origin, callback) => {
+      try {
+  if (isOriginAllowed(origin)) return callback(null, true);
+  logger.warn('[socket.io cors] blocked origin', { origin });
+  return callback(new Error('Not allowed by CORS'));
+      } catch (e) { return callback(e); }
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true
   },
