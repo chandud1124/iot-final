@@ -441,15 +441,23 @@ const toggleSwitch = async (req, res) => {
       return res.status(202).json({ message: 'Device offline. Toggle queued.', queued: true });
     }
 
-    // If marked online but not identified through raw WS, block with 409
+    // If marked online but not identified through raw WS, queue the toggle (behave like offline)
     try {
       const ws = global.wsDevices && device.macAddress ? global.wsDevices.get(device.macAddress.toUpperCase()) : null;
       if (!ws || ws.readyState !== 1) {
-        return res.status(409).json({
-          success: false,
-          code: 'device_not_identified',
-          message: 'Device is not identified/connected. Please wait for the device to connect and try again.'
-        });
+        const targetSw = device.switches.find(sw => sw._id.toString() === switchId);
+        if (!targetSw) return res.status(404).json({ message: 'Switch not found' });
+        const desired = state !== undefined ? state : !targetSw.state;
+        device.queuedIntents = (device.queuedIntents || []).filter(q => q.switchGpio !== (targetSw.relayGpio || targetSw.gpio));
+        device.queuedIntents.push({ switchGpio: targetSw.relayGpio || targetSw.gpio, desiredState: desired, createdAt: new Date() });
+        await device.save();
+        if (process.env.NODE_ENV !== 'production') {
+          console.warn('[toggleSwitch] queued intent while not_identified', {
+            deviceId: device._id.toString(), mac: device.macAddress, switchId, desired
+          });
+        }
+        try { req.app.get('io').emit('device_toggle_queued', { deviceId, switchId, desired }); } catch {}
+        return res.status(202).json({ message: 'Device not identified yet. Toggle queued.', queued: true });
       }
     } catch {}
 

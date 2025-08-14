@@ -33,16 +33,16 @@ class SocketService {
       // eslint-disable-next-line no-console
       console.warn('[socket] Overriding outdated socket URL', RAW_SOCKET_URL, '->', SOCKET_URL);
     }
-    // Prefer websocket but allow polling fallback with upgrade for compatibility on proxies
+    // Prefer polling first (fewer timeout issues behind some proxies), then upgrade to websocket
     // Connect to base namespace now that /test service removed
     this.socket = io(`${SOCKET_URL}`, {
-      transports: ['websocket', 'polling'],
+      transports: ['polling', 'websocket'],
       autoConnect: true,
       reconnection: true,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 5000,
       reconnectionAttempts: Infinity,
-      timeout: 10000,
+      timeout: 15000,
       forceNew: false,
       upgrade: true,
       path: '/socket.io'

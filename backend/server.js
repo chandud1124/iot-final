@@ -123,17 +123,24 @@ const devOrigins = [
   'http://localhost:5175',
   'https://smartclassroom-chandus-projects-0793be70.vercel.app'
 ];
+// Conservative production fallback allowlist (only used when FRONTEND_URLS/FRONTEND_URL are not set)
+// This ensures your deployed Vercel app works out-of-the-box without weakening CORS.
+// To customize, set FRONTEND_URLS in your deployment environment and these fallbacks will be ignored.
+const prodFallbackOrigins = [
+  'https://smartclassroom-lake.vercel.app',
+  'https://*.vercel.app'
+];
 function parseAllowedOrigins() {
   // If env allowlist is provided, prefer it in all environments
   const raw = process.env.FRONTEND_URLS || process.env.FRONTEND_URL || '';
   const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
-  if (parts.length === 0 && process.env.NODE_ENV !== 'production') {
-    // No env allowlist provided; fall back to permissive dev origins
-    return { exact: new Set(devOrigins), patterns: [] };
-  }
+  // Choose source list: env parts if provided, otherwise dev or conservative prod fallbacks
+  const sourceList = parts.length > 0
+    ? parts
+    : (process.env.NODE_ENV !== 'production' ? devOrigins : prodFallbackOrigins);
   const exact = new Set();
   const patterns = [];
-  for (const p of parts) {
+  for (const p of sourceList) {
     if (p.includes('*')) {
       // Convert wildcard to regex. Only allow wildcard in the hostname part for safety.
       // Examples:
