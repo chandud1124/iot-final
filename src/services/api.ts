@@ -4,6 +4,19 @@ import axios from 'axios';
 // Prefer VITE_API_URL, fallback to VITE_API_BASE_URL; avoid hardcoded localhost where possible
 const FROM_ENV = (import.meta.env as any).VITE_API_URL || (import.meta.env as any).VITE_API_BASE_URL || '';
 let RAW_API_BASE_URL = FROM_ENV;
+// If running on Vercel, force same-origin calls through /api to use rewrites/proxy and avoid CORS
+try {
+  const host = window?.location?.hostname || '';
+  const isVercel = /\.vercel\.app$/i.test(host);
+  if (isVercel) {
+    const forced = (window.location.origin.replace(/\/+$/, '')) + '/api';
+    if (RAW_API_BASE_URL && RAW_API_BASE_URL !== forced) {
+      // eslint-disable-next-line no-console
+      console.warn('[api] Overriding cross-origin API base for Vercel host', RAW_API_BASE_URL, '->', forced);
+    }
+    RAW_API_BASE_URL = forced;
+  }
+} catch { /* ignore */ }
 // If not provided, derive from current window origin (useful in prod); as last resort, keep localhost for dev only
 if (!RAW_API_BASE_URL) {
   try {

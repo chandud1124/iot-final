@@ -298,9 +298,33 @@ const useDevicesInternal = () => {
 
   // Periodic fallback refresh if socket disconnected or stale
   useEffect(() => {
+    let reconnectAttempts = 0;
     const interval = setInterval(() => {
-      if (!socketService.isConnected() || Date.now() - lastLoaded > STALE_MS) {
+      if (!socketService.isConnected()) {
+        reconnectAttempts++;
+        // Try to reconnect socket
+        try {
+          socketService.disconnect();
+          // Recreate the socket instance
+          // @ts-ignore
+          socketService.socket?.connect();
+        } catch {}
+        // Reload device state after reconnect attempt
         loadDevices({ background: true, force: true });
+        // Optionally notify user after several failed attempts
+        if (reconnectAttempts === 3) {
+          // eslint-disable-next-line no-console
+          console.warn('Connection lost. Trying to reconnect...');
+        }
+        if (reconnectAttempts > 10) {
+          // eslint-disable-next-line no-console
+          console.error('Unable to reconnect to backend. Please check your network or refresh the page.');
+        }
+      } else {
+        reconnectAttempts = 0;
+        if (Date.now() - lastLoaded > STALE_MS) {
+          loadDevices({ background: true, force: true });
+        }
       }
     }, 15000);
     return () => clearInterval(interval);
@@ -308,16 +332,23 @@ const useDevicesInternal = () => {
 
   // (loadDevices function hoisted above)
 
-  const toggleCooldownMs = 250;
+  const toggleCooldownMs = 400;
   const toggleTimestamps: Record<string, number> = {};
+  const inFlightTogglesRef = useRef<Set<string>>(new Set());
   const toggleSwitch = async (deviceId: string, switchId: string) => {
     const key = deviceId + ':' + switchId;
     const now = Date.now();
+    // Drop if a toggle for this switch is already in-flight
+    if (inFlightTogglesRef.current.has(key)) {
+      if (process.env.NODE_ENV !== 'production') console.debug('[toggle] ignored in-flight duplicate', { deviceId, switchId });
+      return;
+    }
     if (toggleTimestamps[key] && now - toggleTimestamps[key] < toggleCooldownMs) {
       if (process.env.NODE_ENV !== 'production') console.debug('[toggle] ignored rapid repeat', { deviceId, switchId });
       return;
     }
     toggleTimestamps[key] = now;
+    inFlightTogglesRef.current.add(key);
     // Prevent toggling if device currently marked offline
     const target = devices.find(d => d.id === deviceId);
     if (target && target.status !== 'online') {
@@ -343,6 +374,10 @@ const useDevicesInternal = () => {
     } catch (err: any) {
       console.error('Error toggling switch:', err);
       throw err;
+    }
+    finally {
+      // Release in-flight after a brief window to coalesce accidental double taps
+      setTimeout(() => { inFlightTogglesRef.current.delete(key); }, 500);
     }
   };
 

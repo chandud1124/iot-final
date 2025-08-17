@@ -67,7 +67,7 @@
 // even before the device connects and receives config from the backend.
 // Set to 1 to enable. Configure the pins below for your wiring.
 #ifndef ENABLE_OFFLINE_FALLBACK
-#define ENABLE_OFFLINE_FALLBACK 0
+#define ENABLE_OFFLINE_FALLBACK 1
 #endif
 #ifndef FALLBACK_RELAY_GPIO
 #define FALLBACK_RELAY_GPIO 27

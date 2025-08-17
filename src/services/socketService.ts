@@ -9,6 +9,14 @@ class SocketService {
   const WS_OVERRIDE = (import.meta.env as any).VITE_WEBSOCKET_URL || '';
   const FROM_ENV = (import.meta.env as any).VITE_API_URL || (import.meta.env as any).VITE_API_BASE_URL || '';
     let RAW_SOCKET_URL = WS_OVERRIDE || FROM_ENV;
+    // If running on Vercel, force same-origin socket base (frontend origin)
+    try {
+      const host = window?.location?.hostname || '';
+      const isVercel = /\.vercel\.app$/i.test(host);
+      if (isVercel) {
+        RAW_SOCKET_URL = window.location.origin;
+      }
+    } catch { /* ignore */ }
     // If not provided, derive from current origin in production; otherwise fallback to localhost for dev
     if (!RAW_SOCKET_URL) {
       try {
@@ -21,7 +29,7 @@ class SocketService {
     if (!RAW_SOCKET_URL) {
       RAW_SOCKET_URL = 'http://localhost:3001';
     }
-    // If env base includes /api (used for REST), strip it for Socket.IO root namespace
+  // If env base includes /api (used for REST), strip it for Socket.IO root namespace
     let derived = RAW_SOCKET_URL.replace(/\/$/, '');
   if (/\/api$/.test(derived)) {
       derived = derived.replace(/\/api$/, '');

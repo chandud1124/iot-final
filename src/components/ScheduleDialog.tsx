@@ -64,14 +64,29 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
     }
   }, [schedule, open]);
 
-  const allSwitches = devices.flatMap(device => 
+  // Build switch list with type and location for filtering
+  const allSwitches = devices.flatMap(device =>
     device.switches.map(sw => ({
       id: `${device.id}-${sw.id}`,
-      name: `${sw.name} (${device.name})`,
+      name: sw.name,
+      type: sw.type || 'other',
       deviceName: device.name,
-      location: device.location
+      location: device.location || 'Unknown'
     }))
   );
+
+  // Get unique locations and types for filter dropdowns
+  const locations = Array.from(new Set(allSwitches.map(sw => sw.location)));
+  const types = Array.from(new Set(allSwitches.map(sw => sw.type)));
+
+  // Filter state
+   const [locationFilter, setLocationFilter] = useState<string>('all');
+   const [typeFilter, setTypeFilter] = useState<string>('all');
+
+  // Filtered switches
+   const filteredSwitches = allSwitches.filter(sw => {
+     return (locationFilter === 'all' || sw.location === locationFilter) && (typeFilter === 'all' || sw.type === typeFilter);
+  });
 
   const handleDayToggle = (day: string, checked: boolean) => {
     if (checked) {
@@ -101,18 +116,15 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
 
     onSave(formData);
     onOpenChange(false);
-    
     // Reset form for new schedules
-    if (!schedule) {
-      setFormData({
-        name: '',
-        time: '09:00',
-        action: 'on',
-        days: [],
-        switches: [],
-        timeoutMinutes: 480
-      });
-    }
+    setFormData({
+      name: '',
+      time: '09:00',
+      action: 'on',
+      days: [],
+      switches: [],
+      timeoutMinutes: 480
+    });
   };
 
   return (
@@ -123,7 +135,6 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
             {schedule ? 'Edit Schedule' : 'Add New Schedule'}
           </DialogTitle>
         </DialogHeader>
-        
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -145,7 +156,6 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
               />
             </div>
           </div>
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="action">Action *</Label>
@@ -173,40 +183,59 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
               </p>
             </div>
           </div>
-
-          <div>
-            <Label>Days *</Label>
-            <div className="grid grid-cols-4 gap-2 mt-2">
-              {DAYS_OF_WEEK.map(day => (
-                <div key={day} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={day}
-                    checked={formData.days.includes(day)}
-                    onCheckedChange={(checked) => handleDayToggle(day, checked as boolean)}
-                  />
-                  <Label htmlFor={day} className="text-sm">{day.slice(0, 3)}</Label>
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div>
             <Label>Select Switches/Devices *</Label>
-            <div className="max-h-40 overflow-y-auto border rounded p-3 mt-2 space-y-2">
-              {allSwitches.map(sw => (
-                <div key={sw.id} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={sw.id}
-                    checked={formData.switches.includes(sw.id)}
-                    onCheckedChange={(checked) => handleSwitchToggle(sw.id, checked as boolean)}
-                  />
-                  <Label htmlFor={sw.id} className="text-sm flex-1">
-                    {sw.name}
-                    <span className="text-muted-foreground ml-2">({sw.location})</span>
-                  </Label>
+            {allSwitches.length === 0 ? (
+              <div className="p-4 text-center text-muted-foreground text-sm">
+                No devices or switches available. Please add devices first or check your connection.
+              </div>
+            ) : (
+              <>
+                <div className="flex gap-4 mb-2">
+                  <div>
+                    <Label htmlFor="locationFilter">Class/Block</Label>
+                    <Select value={locationFilter} onValueChange={setLocationFilter}>
+                      <SelectTrigger className="w-32"><SelectValue placeholder="All" /></SelectTrigger>
+                      <SelectContent>
+                        {/* Remove stray SelectItem and div */}
+                        {locations.map(loc => (
+                          <SelectItem key={loc} value={loc}>{loc}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="typeFilter">Type</Label>
+                    <Select value={typeFilter} onValueChange={setTypeFilter}>
+                      <SelectTrigger className="w-32"><SelectValue placeholder="All" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All</SelectItem>
+                        {types.map(type => (
+                          <SelectItem key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              ))}
-            </div>
+                <div className="max-h-40 overflow-y-auto border rounded p-3 mt-2 space-y-2">
+                  {filteredSwitches.map(sw => (
+                    <div key={sw.id} className="flex items-center space-x-2">
+                      <Checkbox
+                        id={sw.id}
+                        checked={formData.switches.includes(sw.id)}
+                        onCheckedChange={(checked) => handleSwitchToggle(sw.id, checked as boolean)}
+                      />
+                      <Label htmlFor={sw.id} className="text-sm flex-1">
+                        {sw.name} <span className="text-muted-foreground ml-2">({sw.deviceName}, {sw.location}, {sw.type})</span>
+                      </Label>
+                    </div>
+                  ))}
+                  {filteredSwitches.length === 0 && (
+                    <div className="text-xs text-muted-foreground">No switches found for selected filters.</div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="flex justify-end space-x-2 pt-4">

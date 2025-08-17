@@ -158,9 +158,18 @@ bool applySwitchState(int gpio, bool state) {
     if (sw.gpio == gpio) {
       sw.state = state;
       pinMode(sw.gpio, OUTPUT);
-  digitalWrite(sw.gpio, state ? LOW : HIGH);
-  Serial.printf("[SWITCH] GPIO %d -> %s (active-low)\n", sw.gpio, state ? "ON":"OFF");
-  sendStateUpdate(); // coalesce rapid changes; flush after debounce
+      // Smooth transition: fade relay ON/OFF over 200ms (if hardware supports)
+      // For standard relays, simulate with a short delay before switching
+      if (STATUS_LED_PIN != 255) {
+        digitalWrite(STATUS_LED_PIN, HIGH); // LED ON during transition
+      }
+      delay(200); // 200ms smooth transition
+      digitalWrite(sw.gpio, state ? LOW : HIGH);
+      if (STATUS_LED_PIN != 255) {
+        digitalWrite(STATUS_LED_PIN, LOW); // LED OFF after transition
+      }
+      Serial.printf("[SWITCH] GPIO %d -> %s (active-low, smooth)\n", sw.gpio, state ? "ON":"OFF");
+      sendStateUpdate(true); // always send immediate state update for reliability
       return true;
     }
   }
