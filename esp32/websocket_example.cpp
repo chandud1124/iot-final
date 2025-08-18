@@ -435,7 +435,6 @@ void setup() {
     // Secure WebSocket (wss) on port 443
     ws.beginSSL(WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
     #if WS_INSECURE_TLS
-      ws.setInsecure(); // skip cert validation (use only if you can't bundle CA)
     #endif
     Serial.printf("[WS] begin wss://%s:%d%s\n", WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
   #else
