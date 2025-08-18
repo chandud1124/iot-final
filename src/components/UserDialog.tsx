@@ -145,6 +145,8 @@ export const UserDialog: React.FC<UserDialogProps> = ({
                   <SelectItem value="admin">Administrator</SelectItem>
                   <SelectItem value="faculty">Faculty</SelectItem>
                   <SelectItem value="security">Security</SelectItem>
+                  <SelectItem value="hod">HOD</SelectItem>
+                  <SelectItem value="dean">Dean</SelectItem>
                   <SelectItem value="user">Student/User</SelectItem>
                 </SelectContent>
               </Select>

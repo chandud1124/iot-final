@@ -122,15 +122,17 @@ const Devices = () => {
   const addSwitch = () => {
     setNewDevice(prev => ({
       ...prev,
-      switches: [
-        ...prev.switches,
-        {
-          name: `Switch ${prev.switches.length + 1}`,
-          gpio: prev.switches.length > 0 ? Math.max(...prev.switches.map(s => s.gpio)) + 1 : 0,
-          type: 'relay',
-          state: false
-        }
-      ]
+      switches: prev.switches.length < 40
+        ? [
+            ...prev.switches,
+            {
+              name: `Switch ${prev.switches.length + 1}`,
+              gpio: prev.switches.length > 0 ? Math.max(...prev.switches.map(s => s.gpio)) + 1 : 0,
+              type: 'relay',
+              state: false
+            }
+          ]
+        : prev.switches
     }));
   };
 

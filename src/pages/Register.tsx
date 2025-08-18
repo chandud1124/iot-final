@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { authAPI } from '@/services/api';
 
 const departments = [
+  'Student',
   'IT Department',
   'Engineering',
   'Operations',
