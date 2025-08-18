@@ -52,6 +52,17 @@ const switchSchema = new mongoose.Schema({
       message: 'GPIO pins 6-11 are reserved for internal use'
     }
   },
+  linkedRelayGpios: {
+    type: [Number],
+    default: [],
+    validate: {
+      validator: function(arr) {
+        if (!Array.isArray(arr)) return false;
+        return arr.every(v => typeof v === 'number' && v >= 0 && v <= 39 && !(v >= 6 && v <= 11));
+      },
+      message: 'All linked relay GPIOs must be valid and not reserved (6-11)'
+    }
+  },
   manualMode: {
     type: String,
     enum: ['maintained', 'momentary'],

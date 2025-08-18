@@ -117,6 +117,7 @@ void webSocketEvent(WStype_t type, uint8_t * payload, size_t length) {
 // State variables
 DeviceConfig config;
 bool* switchStates;  // Dynamically allocated based on numSwitches
+std::vector<std::vector<int>> manualLinkedRelays(MAX_SWITCHES); // Store linked relays for each manual switch
 bool lastPirState = false;
 unsigned long lastPirTrigger = 0;
 unsigned long lastHeartbeat = 0;
@@ -189,13 +190,22 @@ void updateConfig(const JsonDocument& doc) {
     for (size_t i = 0; i < config.numSwitches; i++) {
       JsonObject sw = switches[i];
       strlcpy(config.switches[i].name, sw["name"] | "", SWITCH_NAME_LENGTH);
-      // Prefer relayGpio from backend if provided, fallback to gpio
       int gpio = sw.containsKey("relayGpio") ? (int)sw["relayGpio"].as<int>() : (int)(sw["gpio"] | 0);
       config.switches[i].gpio = (uint8_t)gpio;
       strlcpy(config.switches[i].type, sw["type"] | "relay", 16);
-      // Apply initial state from config if present
       bool st = sw.containsKey("state") ? sw["state"].as<bool>() : false;
       switchStates[i] = st;
+      // Parse linkedRelayGpios if present
+      if (sw.containsKey("linkedRelayGpios")) {
+        JsonArray arr = sw["linkedRelayGpios"].as<JsonArray>();
+        std::vector<int> linked;
+        for (JsonVariant v : arr) {
+          linked.push_back(v.as<int>());
+        }
+        manualLinkedRelays[i] = linked;
+      } else {
+        manualLinkedRelays[i].clear();
+      }
     }
   }
     
@@ -679,20 +689,30 @@ void toggleRelay(int relayIndex, bool state) {
 void checkManualSwitches() {
   for (int i = 0; i < 4; i++) {
     bool currentState = !digitalRead(MANUAL_SWITCH_PINS[i]); // Inverted because of pull-up
-    
     if (currentState != manualOverride[i]) {
       manualOverride[i] = currentState;
-      
       if (currentState) {
-        // Manual switch pressed - toggle relay
-        relayStates[i] = !relayStates[i];
-  digitalWrite(RELAY_PINS[i], relayStates[i] ? HIGH : LOW);
-        
-        // Send update to server
-        sendSwitchStateUpdate(i);
-        logActivity(i, relayStates[i] ? "on" : "off", "manual");
-        
-        Serial.println("Manual switch " + String(i + 1) + " pressed - Relay " + (relayStates[i] ? "ON" : "OFF"));
+        // Manual switch pressed - toggle all linked relays
+        std::vector<int> linked = manualLinkedRelays[i];
+        if (linked.empty()) {
+          // Fallback: toggle own relay
+          relayStates[i] = !relayStates[i];
+          digitalWrite(RELAY_PINS[i], relayStates[i] ? HIGH : LOW);
+          sendSwitchStateUpdate(i);
+          logActivity(i, relayStates[i] ? "on" : "off", "manual");
+          Serial.println("Manual switch " + String(i + 1) + " pressed - Relay " + (relayStates[i] ? "ON" : "OFF"));
+        } else {
+          for (int gpio : linked) {
+            int idx = findSwitchIndexByGpio(gpio);
+            if (idx >= 0 && idx < MAX_SWITCHES) {
+              relayStates[idx] = !relayStates[idx];
+              digitalWrite(config.switches[idx].gpio, relayStates[idx] ? HIGH : LOW);
+              sendSwitchStateUpdate(idx);
+              logActivity(idx, relayStates[idx] ? "on" : "off", "manual");
+              Serial.printf("Manual switch %d pressed - Linked Relay GPIO %d -> %s\n", i+1, gpio, relayStates[idx] ? "ON" : "OFF");
+            }
+          }
+        }
       }
     }
   }

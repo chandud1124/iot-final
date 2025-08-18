@@ -154,16 +154,17 @@ const createDevice = async (req, res) => {
       pirGpio,
       pirAutoOffDelay,
       switches: switches.map(sw => ({
-        name: sw.name,
-        gpio: sw.gpio,
-        type: sw.type || 'relay',
-        state: false, // force default off; ignore provided state
-        icon: sw.icon || 'lightbulb',
-        manualSwitchEnabled: !!sw.manualSwitchEnabled,
-        manualSwitchGpio: sw.manualSwitchGpio,
-        manualMode: sw.manualMode || 'maintained',
-        manualActiveLow: sw.manualActiveLow !== undefined ? sw.manualActiveLow : true,
-        lastStateChange: new Date()
+  name: sw.name,
+  gpio: sw.gpio,
+  type: sw.type || 'relay',
+  state: false, // force default off; ignore provided state
+  icon: sw.icon || 'lightbulb',
+  manualSwitchEnabled: !!sw.manualSwitchEnabled,
+  manualSwitchGpio: sw.manualSwitchGpio,
+  manualMode: sw.manualMode || 'maintained',
+  manualActiveLow: sw.manualActiveLow !== undefined ? sw.manualActiveLow : true,
+  linkedRelayGpios: Array.isArray(sw.linkedRelayGpios) ? sw.linkedRelayGpios : [],
+  lastStateChange: new Date()
       })),
       deviceSecret,
       createdBy: req.user.id,
@@ -339,7 +340,8 @@ const updateDevice = async (req, res) => {
           manualSwitchEnabled: !!sw.manualSwitchEnabled,
           manualSwitchGpio: sw.manualSwitchGpio,
           manualMode: sw.manualMode || (existing && existing.manualMode) || 'maintained',
-          manualActiveLow: sw.manualActiveLow !== undefined ? sw.manualActiveLow : (existing ? existing.manualActiveLow : true)
+          manualActiveLow: sw.manualActiveLow !== undefined ? sw.manualActiveLow : (existing ? existing.manualActiveLow : true),
+          linkedRelayGpios: Array.isArray(sw.linkedRelayGpios) ? sw.linkedRelayGpios : (existing?.linkedRelayGpios || [])
         };
       });
       // Determine removed switches (by id or name fallback)
@@ -523,24 +525,55 @@ const toggleSwitch = async (req, res) => {
     // Do not broadcast device_state_changed immediately to avoid UI desync if hardware fails.
     // Instead, emit a lightweight intent event; authoritative updates will come from switch_result/state_update.
     try {
-      req.app.get('io').emit('switch_intent', {
-        deviceId: updated.id,
-        switchId,
-        gpio: (updatedSwitch && (updatedSwitch.relayGpio || updatedSwitch.gpio)) || (device.switches[switchIndex].relayGpio || device.switches[switchIndex].gpio),
-        desiredState,
-        ts: Date.now()
-      });
+      // If manual switch has linkedRelayGpios, emit intent for each
+      if (updatedSwitch && Array.isArray(updatedSwitch.linkedRelayGpios) && updatedSwitch.linkedRelayGpios.length > 0) {
+        updatedSwitch.linkedRelayGpios.forEach(gpio => {
+          req.app.get('io').emit('switch_intent', {
+            deviceId: updated.id,
+            switchId,
+            gpio,
+            desiredState,
+            ts: Date.now()
+          });
+        });
+      } else {
+        req.app.get('io').emit('switch_intent', {
+          deviceId: updated.id,
+          switchId,
+          gpio: (updatedSwitch && (updatedSwitch.relayGpio || updatedSwitch.gpio)) || (device.switches[switchIndex].relayGpio || device.switches[switchIndex].gpio),
+          desiredState,
+          ts: Date.now()
+        });
+      }
     } catch (e) {
       if (process.env.NODE_ENV !== 'production') console.warn('[switch_intent emit failed]', e.message);
     }
 
-      // Push command to ESP32 if connected through raw WebSocket
-      let dispatchedToHardware = false;
-      let hwReason = 'not_attempted';
-      try {
-        if (global.wsDevices && updated.macAddress) {
-          const ws = global.wsDevices.get(updated.macAddress.toUpperCase());
-          if (ws && ws.readyState === 1) { // OPEN
+    // Push command to ESP32 if connected through raw WebSocket
+    let dispatchedToHardware = false;
+    let hwReason = 'not_attempted';
+    try {
+      if (global.wsDevices && updated.macAddress) {
+        const ws = global.wsDevices.get(updated.macAddress.toUpperCase());
+        if (ws && ws.readyState === 1) { // OPEN
+          // If manual switch has linkedRelayGpios, send command for each
+          if (updatedSwitch && Array.isArray(updatedSwitch.linkedRelayGpios) && updatedSwitch.linkedRelayGpios.length > 0) {
+            updatedSwitch.linkedRelayGpios.forEach(gpio => {
+              const payload = {
+                type: 'switch_command',
+                mac: updated.macAddress,
+                gpio,
+                state: desiredState,
+                seq: nextCmdSeq(updated.macAddress)
+              };
+              try {
+                logger.info('[hw] switch_command push', { mac: updated.macAddress, gpio: payload.gpio, state: payload.state, deviceId: updated._id.toString(), switchId });
+              } catch {}
+              ws.send(JSON.stringify(payload));
+            });
+            dispatchedToHardware = true;
+            hwReason = 'sent_multi';
+          } else {
             const payload = {
               type: 'switch_command',
               mac: updated.macAddress,
@@ -553,17 +586,18 @@ const toggleSwitch = async (req, res) => {
             } catch {}
             ws.send(JSON.stringify(payload));
             dispatchedToHardware = true;
-            hwReason = 'sent';
-          } else {
-            hwReason = ws ? `ws_not_open_state_${ws.readyState}` : 'ws_not_found';
+            hwReason = 'sent_single';
           }
         } else {
-          hwReason = 'wsDevices_map_missing';
+          hwReason = ws ? `ws_not_open_state_${ws.readyState}` : 'ws_not_found';
         }
-      } catch (e) {
-        console.error('[switch_command push failed]', e.message);
-        hwReason = 'exception_' + e.message;
+      } else {
+        hwReason = 'wsDevices_map_missing';
       }
+    } catch (e) {
+      console.error('[switch_command push failed]', e.message);
+      hwReason = 'exception_' + e.message;
+    }
 
     res.json({
       success: true,
