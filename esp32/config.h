@@ -3,8 +3,8 @@
 #define CONFIG_H
 
 // WiFi Configuration
-#define WIFI_SSID "I am Not A Witch I am Your Wifi"
-#define WIFI_PASSWORD "Whoareu@0000"
+#define WIFI_SSID "AIMS-WIFI"
+#define WIFI_PASSWORD "Aimswifi#2025"
 
 // Server Configuration
 // For local dev: use your machine's LAN IP and port 3001 (ws)

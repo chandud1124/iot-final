@@ -141,6 +141,18 @@ const Switches = () => {
                     {device.location || 'Unknown'}{device.classroom ? ` • ${device.classroom}` : ''}
                   </p>
                   <p className="text-[10px] text-muted-foreground mt-0.5">{onCount}/{device.switches.length} on</p>
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      className="px-2 py-1 rounded bg-green-600 text-white text-xs border border-green-700 disabled:opacity-50"
+                      disabled={device.status !== 'online'}
+                      onClick={() => handleDeviceBulk(device.id, true)}
+                    >Turn On All</button>
+                    <button
+                      className="px-2 py-1 rounded bg-red-600 text-white text-xs border border-red-700 disabled:opacity-50"
+                      disabled={device.status !== 'online'}
+                      onClick={() => handleDeviceBulk(device.id, false)}
+                    >Turn Off All</button>
+                  </div>
                 </CardHeader>
                 <CardContent className="pt-0 pb-3 px-4 flex-1">
                   <div className="space-y-2 max-h-64 overflow-auto pr-1">
