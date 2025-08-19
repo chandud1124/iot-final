@@ -528,74 +528,47 @@ wss.on('connection', (ws) => {
     let data;
     try { data = JSON.parse(msg.toString()); } catch { return; }
     const type = data.type;
-    if (type === 'identify' || type === 'authenticate') {
-      const mac = (data.mac || data.macAddress || '').toUpperCase();
-      const secret = data.secret || data.signature;
-      if (!mac) {
-        ws.send(JSON.stringify({ type:'error', reason:'missing_mac' }));
+    if (type === 'auth') {
+      const mac = (data.mac || '').toUpperCase();
+      const secretKey = data.secretKey;
+
+      if (!mac || !secretKey) {
+        ws.send(JSON.stringify({ type: 'auth_failed', reason: 'missing_fields' }));
+        ws.close();
         return;
       }
+
       try {
         const Device = require('./models/Device');
-        // fetch secret field explicitly
         const device = await Device.findOne({ macAddress: mac }).select('+deviceSecret switches macAddress');
-        if (!device || !device.deviceSecret) {
-          // If deviceSecret not set, allow temporary identification without secret
-          if (!device) {
-            logger.warn('[identify] device_not_registered', { mac });
-            ws.send(JSON.stringify({ type:'error', reason:'device_not_registered' }));
-            try { io.emit('identify_error', { mac, reason: 'device_not_registered' }); } catch {}
-            return;
-          }
-        } else if (!secret || device.deviceSecret !== secret) {
-          if (process.env.ALLOW_INSECURE_IDENTIFY === '1') {
-            logger.warn('[identify] secret mismatch but ALLOW_INSECURE_IDENTIFY=1, allowing temporary identify', { mac });
-          } else {
-            logger.warn('[identify] invalid_or_missing_secret', { mac, provided: secret ? 'present' : 'missing' });
-            ws.send(JSON.stringify({ type:'error', reason:'invalid_or_missing_secret' }));
-            try { io.emit('identify_error', { mac, reason: 'invalid_or_missing_secret' }); } catch {}
-            return;
-          }
+
+        if (!device) {
+          logger.warn(`[auth] Device not registered: ${mac}`);
+          ws.send(JSON.stringify({ type: 'auth_failed', reason: 'not_registered' }));
+          ws.close();
+          return;
         }
-  ws.mac = mac;
-  // Attach secret for this connection (if available)
-  ws.secret = (device && device.deviceSecret) ? device.deviceSecret : undefined;
+
+        if (device.deviceSecret !== secretKey) {
+          logger.warn(`[auth] Invalid key for ${mac}`);
+          ws.send(JSON.stringify({ type: 'auth_failed', reason: 'invalid_key' }));
+          ws.close();
+          return;
+        }
+
+        // ✅ Auth success
+        ws.mac = mac;
+        ws.secret = device.deviceSecret;
         wsDevices.set(mac, ws);
+
         device.status = 'online';
         device.lastSeen = new Date();
         await device.save();
-        if (process.env.NODE_ENV !== 'production') {
-          console.log('[identify] device marked online', { mac, lastSeen: device.lastSeen.toISOString() });
-        }
-        // Flush any queued intents AFTER firmware likely sends a state_update,
-        // so we don't override manual/hardware changes made while offline.
-        if (Array.isArray(device.queuedIntents) && device.queuedIntents.length) {
-          setTimeout(async () => {
-            try {
-              const Device = require('./models/Device');
-              const fresh = await Device.findOne({ macAddress: mac });
-              if (!fresh || !Array.isArray(fresh.switches)) return;
-              const intents = Array.isArray(fresh.queuedIntents) ? fresh.queuedIntents : [];
-              const toSend = [];
-              for (const intent of intents) {
-                const sw = fresh.switches.find(s => (s.relayGpio || s.gpio) === intent.switchGpio);
-                // Only send if desired differs from CURRENT DB state (likely updated by state_update)
-                if (!sw || sw.state === intent.desiredState) {
-                  continue; // skip: already in desired state
-                }
-                toSend.push({ gpio: intent.switchGpio, state: intent.desiredState });
-              }
-              // Send remaining intents
-              for (const cmd of toSend) {
-                try { ws.send(JSON.stringify({ type:'switch_command', mac, gpio: cmd.gpio, state: cmd.state })); } catch {}
-              }
-              // Clear all intents regardless; future discrepancies will reconcile via switch_result/state_update
-              fresh.queuedIntents = [];
-              await fresh.save();
-            } catch (e) { /* ignore flush errors */ }
-          }, 600); // small delay to allow initial state_update to arrive first
-        }
-        // Build minimal switch config (exclude sensitive/internal fields)
+
+        ws.send(JSON.stringify({ type: 'auth_success', mac }));
+        logger.info(`[auth] Device ${mac} authenticated`);
+
+        // Send minimal switch config back to ESP32
         const switchConfig = Array.isArray(device.switches) ? device.switches.map(sw => ({
           gpio: sw.gpio,
           relayGpio: sw.relayGpio,
@@ -606,21 +579,20 @@ wss.on('connection', (ws) => {
           manualActiveLow: sw.manualActiveLow,
           state: sw.state
         })) : [];
+
         ws.send(JSON.stringify({
-          type: 'identified',
-            mac,
-            mode: device.deviceSecret ? 'secure' : 'insecure',
-            switches: switchConfig
+          type: 'config_update',
+          mac,
+          switches: switchConfig
         }));
-        // Do not spam immediate config_update; identified already carries switches.
-        // Firmware preserves prior states and emits a state_update after applying if needed.
-        logger.info(`[esp32] identified ${mac}`);
-  // Notify frontend clients for immediate UI updates / queued toggle flush
-  try { io.emit('device_connected', { deviceId: device.id, mac }); } catch {}
-      } catch (e) {
-        logger.error('[identify] error', e.message);
+
+        try { io.emit('device_connected', { deviceId: device.id, mac }); } catch {}
+      } catch (err) {
+        logger.error('[auth] error', err.message);
+        ws.send(JSON.stringify({ type: 'auth_failed', reason: 'server_error' }));
+        ws.close();
+        return;
       }
-      return;
     }
     if (!ws.mac) return; // ignore until identified
     if (type === 'heartbeat') {
