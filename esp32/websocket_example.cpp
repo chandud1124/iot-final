@@ -33,7 +33,7 @@
 #include <mbedtls/md.h>
 #endif
 #include <vector>
-#define HEARTBEAT_MS 30000UL          // 30s heartbeat interval
+#define HEARTBEAT_MS 15000UL          // 15s heartbeat interval for faster connection issue detection
 #define DEVICE_SECRET "87cf1b5017a8486106a9a234d149f7ddfdf56f7b648af688" // device secret from backend
 
 // Optional status LED (set to 255 to disable if your board lacks LED_BUILTIN)
@@ -42,7 +42,7 @@
 #endif
 
 // Debounce multiple rapid local state changes into one state_update
-#define STATE_DEBOUNCE_MS 120
+#define STATE_DEBOUNCE_MS 250  // Increased debounce time to 250ms for better stability
 
 // Active-low mapping: logical ON -> LOW, OFF -> HIGH (common relay boards)
 
@@ -68,7 +68,7 @@ struct SwitchState {
   int stableManualLevel = -1;  // debounced level
   bool lastManualActive = false; // previous debounced logical active level (after polarity)
 };
-#define MANUAL_DEBOUNCE_MS 30
+#define MANUAL_DEBOUNCE_MS 20
 // Treat a falling edge (HIGH->LOW) on a pullup input as a toggle event
 #define MANUAL_ACTIVE_LOW 1
 #define MANUAL_DBG_INTERVAL_MS 2000UL
@@ -450,19 +450,23 @@ void setup() {
 
 void loop() {
   ws.loop();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi disconnected! Attempting reconnect...");
+    WiFi.disconnect();
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    delay(1000); // Short delay to allow reconnect
+    return;
+  }
   if (millis() - lastHeartbeat > HEARTBEAT_MS) {
     sendHeartbeat();
     lastHeartbeat = millis();
   }
-  // If we have a websocket connection but haven't been identified yet, retry identify periodically
   if (!identified && (millis() - lastIdentifyAttempt) > IDENTIFY_RETRY_MS) {
     identify();
   }
-  // Flush a pending coalesced state update when debounce interval elapsed
   if (pendingState && (millis() - lastStateSent) >= STATE_DEBOUNCE_MS) {
     sendStateUpdate();
   }
-  // Poll manual (wall) switches for changes with debounce
   unsigned long now = millis();
   bool anyManualToggled = false;
   for (auto &sw : switchesLocal) {
@@ -470,54 +474,30 @@ void loop() {
     int lvl = digitalRead(sw.manualGpio);
     if (lvl != sw.lastManualLevel) {
       sw.lastManualLevel = lvl;
-      sw.lastManualChangeMs = now; // start debounce window
-  Serial.printf("[MANUAL][RAW] input=%d level=%d at %lu ms\n", sw.manualGpio, lvl, (unsigned long)now);
+      sw.lastManualChangeMs = now;
     }
-    // Debounce: require stable level for MANUAL_DEBOUNCE_MS
     if ((now - sw.lastManualChangeMs) >= MANUAL_DEBOUNCE_MS && lvl != sw.stableManualLevel) {
-      // Level stabilized at new value
       sw.stableManualLevel = lvl;
       bool logicalActive = sw.manualActiveLow ? (sw.stableManualLevel == LOW) : (sw.stableManualLevel == HIGH);
-  Serial.printf("[MANUAL][STABLE] input=%d raw=%d logicalActive=%d mode=%s\n",
-        sw.manualGpio, sw.stableManualLevel, logicalActive?1:0, sw.manualMomentary?"momentary":"maintained");
-
       if (sw.manualMomentary) {
-        // Toggle only on rising active edge (inactive->active)
         if (logicalActive && !sw.lastManualActive) {
           bool newState = !sw.state;
-          Serial.printf("[MANUAL] momentary edge gpio=%d (input %d) -> toggle -> %s\n", sw.gpio, sw.manualGpio, newState?"ON":"OFF");
           applySwitchState(sw.gpio, newState);
           anyManualToggled = true;
         }
       } else {
-        // Maintained: map level directly to state
         if (logicalActive != sw.state) {
-          Serial.printf("[MANUAL] maintained level gpio=%d (input %d) active=%d -> state=%s\n", sw.gpio, sw.manualGpio, logicalActive, logicalActive?"ON":"OFF");
           applySwitchState(sw.gpio, logicalActive);
           anyManualToggled = true;
         }
       }
       sw.lastManualActive = logicalActive;
     } else if ((now - sw.lastManualChangeMs) >= MANUAL_DEBOUNCE_MS) {
-      // No new stable level but ensure lastManualActive reflects stable level after initial setup
       sw.lastManualActive = sw.manualActiveLow ? (sw.stableManualLevel == LOW) : (sw.stableManualLevel == HIGH);
     }
   }
   if (anyManualToggled) {
     // applySwitchState already sends an immediate state_update(true)
   }
-  // Periodic manual-input debug to verify wiring and signal levels
-  if (millis() - lastManualDbg > MANUAL_DBG_INTERVAL_MS) {
-    lastManualDbg = millis();
-    for (auto &sw : switchesLocal) {
-      if (!sw.manualEnabled || sw.manualGpio < 0) continue;
-      int raw = digitalRead(sw.manualGpio);
-      bool logicalActive = sw.manualActiveLow ? (raw == LOW) : (raw == HIGH);
-      Serial.printf("[MANUAL][DBG] relayGPIO=%d input=%d raw=%d logicalActive=%d mode=%s state=%s\n",
-                    sw.gpio, sw.manualGpio, raw, logicalActive?1:0,
-                    sw.manualMomentary?"momentary":"maintained",
-                    sw.state?"ON":"OFF");
-    }
-  }
-  delay(10);
+  delay(5);
 }
