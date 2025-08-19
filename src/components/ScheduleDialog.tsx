@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -8,14 +7,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { useDevices } from '@/hooks/useDevices';
 import { useToast } from '@/hooks/use-toast';
+import { Clock } from 'lucide-react';
 
 interface ScheduleData {
   name: string;
-  time: string;
-  action: 'on' | 'off';
+  onTime: string;
+  offTime: string;
+  enableOnTime?: boolean;
+  enableOffTime?: boolean;
   days: string[];
   switches: string[];
-  timeoutMinutes?: number;
 }
 
 interface ScheduleDialogProps {
@@ -40,11 +41,12 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
   
   const [formData, setFormData] = useState<ScheduleData>({
     name: schedule?.name || '',
-    time: schedule?.time || '09:00',
-    action: schedule?.action || 'on',
+    onTime: schedule?.onTime || '',
+    offTime: schedule?.offTime || '',
+    enableOnTime: schedule?.enableOnTime !== false,
+    enableOffTime: schedule?.enableOffTime !== false,
     days: schedule?.days || [],
-    switches: schedule?.switches || [],
-    timeoutMinutes: schedule?.timeoutMinutes || 480 // 8 hours default for classroom
+    switches: schedule?.switches || []
   });
 
   // Keep form in sync when editing a schedule
@@ -52,15 +54,16 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
     if (schedule && open) {
       setFormData({
         name: schedule.name || '',
-        time: schedule.time || '09:00',
-        action: schedule.action || 'on',
+        onTime: schedule.onTime || '',
+        offTime: schedule.offTime || '',
+        enableOnTime: schedule.enableOnTime !== false,
+        enableOffTime: schedule.enableOffTime !== false,
         days: Array.isArray(schedule.days) ? schedule.days : [],
         switches: Array.isArray(schedule.switches) ? schedule.switches : [],
-        timeoutMinutes: schedule.timeoutMinutes || 480
       });
     } else if (!open && !schedule) {
       // Reset when closing after adding
-      setFormData({ name: '', time: '09:00', action: 'on', days: [], switches: [], timeoutMinutes: 480 });
+      setFormData({ name: '', onTime: '', offTime: '', days: [], switches: [] });
     }
   }, [schedule, open]);
 
@@ -105,25 +108,30 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
   };
 
   const handleSave = () => {
-    if (!formData.name || !formData.time || formData.days.length === 0 || formData.switches.length === 0) {
+    let errorMsg = '';
+    if (!formData.name) errorMsg = 'Schedule name is required.';
+    else if (formData.days.length === 0) errorMsg = 'Please select at least one day.';
+    else if (formData.switches.length === 0) errorMsg = 'Please select at least one switch/device.';
+    else if (formData.enableOnTime && (!formData.onTime || formData.onTime === '')) errorMsg = 'Please select a Turn On time or uncheck the box.';
+    else if (formData.enableOffTime && (!formData.offTime || formData.offTime === '')) errorMsg = 'Please select a Turn Off time or uncheck the box.';
+    if (errorMsg) {
       toast({
-        title: "Validation Error",
-        description: "Please fill in all required fields",
-        variant: "destructive"
+        title: 'Validation Error',
+        description: errorMsg,
+        variant: 'destructive'
       });
       return;
     }
-
     onSave(formData);
     onOpenChange(false);
-    // Reset form for new schedules
     setFormData({
       name: '',
-      time: '09:00',
-      action: 'on',
+      onTime: '',
+      offTime: '',
+      enableOnTime: true,
+      enableOffTime: true,
       days: [],
-      switches: [],
-      timeoutMinutes: 480
+      switches: []
     });
   };
 
@@ -146,41 +154,49 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
                 placeholder="e.g., Morning Classroom Lights"
               />
             </div>
-            <div>
-              <Label htmlFor="time">Time *</Label>
-              <Input
-                id="time"
-                type="time"
-                value={formData.time}
-                onChange={(e) => setFormData(prev => ({ ...prev, time: e.target.value }))}
-              />
-            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label htmlFor="action">Action *</Label>
-              <Select value={formData.action} onValueChange={(value) => setFormData(prev => ({ ...prev, action: value as 'on' | 'off' }))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="on">Turn On</SelectItem>
-                  <SelectItem value="off">Turn Off</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label htmlFor="onTime">Turn On Time</Label>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enableOnTime"
+                  checked={formData.enableOnTime !== false}
+                  onCheckedChange={(checked) => setFormData(prev => ({ ...prev, enableOnTime: checked === true }))}
+                />
+                <div className="relative w-full">
+                  <Input
+                    id="onTime"
+                    type="time"
+                    value={formData.onTime}
+                    onChange={(e) => setFormData(prev => ({ ...prev, onTime: e.target.value }))}
+                    disabled={formData.enableOnTime === false}
+                    className="border border-primary focus:border-primary text-primary pr-10"
+                  />
+                  <Clock className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 text-primary pointer-events-none" />
+                </div>
+              </div>
             </div>
             <div>
-              <Label htmlFor="timeout">Auto-off Timeout (minutes)</Label>
-              <Input
-                id="timeout"
-                type="number"
-                value={formData.timeoutMinutes}
-                onChange={(e) => setFormData(prev => ({ ...prev, timeoutMinutes: parseInt(e.target.value) }))}
-                placeholder="480 (8 hours)"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                Security will be notified if lights run beyond this time
-              </p>
+              <Label htmlFor="offTime">Turn Off Time</Label>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="enableOffTime"
+                  checked={formData.enableOffTime !== false}
+                  onCheckedChange={(checked) => setFormData(prev => ({ ...prev, enableOffTime: checked === true }))}
+                />
+                <div className="relative w-full">
+                  <Input
+                    id="offTime"
+                    type="time"
+                    value={formData.offTime}
+                    onChange={(e) => setFormData(prev => ({ ...prev, offTime: e.target.value }))}
+                    disabled={formData.enableOffTime === false}
+                    className="border border-primary focus:border-primary text-primary pr-10"
+                  />
+                  <Clock className="absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 text-primary pointer-events-none" />
+                </div>
+              </div>
             </div>
           </div>
           <div>
@@ -237,6 +253,23 @@ export const ScheduleDialog: React.FC<ScheduleDialogProps> = ({
               </>
             )}
           </div>
+          <div className="grid grid-cols-2 gap-4">
+          <div>
+            <Label>Select Days *</Label>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {DAYS_OF_WEEK.map(day => (
+                <div key={day} className="flex items-center gap-1">
+                  <Checkbox
+                    id={`day-${day}`}
+                    checked={formData.days.includes(day)}
+                    onCheckedChange={(checked) => handleDayToggle(day, checked === true)}
+                  />
+                  <Label htmlFor={`day-${day}`} className="text-sm">{day}</Label>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
 
           <div className="flex justify-end space-x-2 pt-4">
             <Button variant="outline" onClick={() => onOpenChange(false)}>

@@ -809,11 +809,11 @@ setInterval(() => {
   });
 }, 30000);
 
-// Offline detection every 60s (mark devices offline if stale)
+// Offline detection every 35s (mark devices offline if stale)
 setInterval(async () => {
   try {
     const Device = require('./models/Device');
-    const cutoff = Date.now() - 60000; // 60s stale
+    const cutoff = Date.now() - 35000; // 35s stale
     const stale = await Device.find({ lastSeen: { $lt: new Date(cutoff) }, status: { $ne: 'offline' } });
     for (const d of stale) {
       d.status = 'offline';
@@ -823,7 +823,7 @@ setInterval(async () => {
   } catch (e) {
     logger.error('[offline-scan] error', e.message);
   }
-}, 60000);
+}, 35000);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

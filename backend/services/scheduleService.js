@@ -1,4 +1,3 @@
-
 const cron = require('node-cron');
 const Schedule = require('../models/Schedule');
 const Device = require('../models/Device');
@@ -133,6 +132,44 @@ class ScheduleService {
         this.removeJob(schedule._id.toString());
       }
 
+      // NEW: After schedule runs, check for switches still ON and emit security alert if any
+      for (const switchRef of schedule.switches) {
+        const device = await Device.findById(switchRef.deviceId);
+        if (!device) continue;
+        const sw = device.switches.find(sw => sw._id.toString() === switchRef.switchId);
+        if (sw && sw.state === true) {
+          // Emit security alert for switch still ON
+          const alertDoc = await SecurityAlert.create({
+            deviceId: device._id,
+            deviceName: device.name,
+            location: device.location,
+            classroom: device.classroom,
+            message: `${sw.name} is still ON after schedule expiry. Manual attention required.`,
+            type: 'schedule_overrun',
+            severity: 'high',
+            metadata: {
+              switchId: sw._id.toString(),
+              switchName: sw.name,
+              scheduleId: schedule._id.toString(),
+              scheduleName: schedule.name
+            }
+          });
+          if (global.io) {
+            global.io.emit('security_alert', {
+              id: alertDoc._id,
+              deviceId: alertDoc.deviceId,
+              deviceName: alertDoc.deviceName,
+              location: alertDoc.location,
+              classroom: alertDoc.classroom,
+              type: alertDoc.type,
+              severity: alertDoc.severity,
+              message: alertDoc.message,
+              metadata: alertDoc.metadata,
+              timestamp: alertDoc.createdAt
+            });
+          }
+        }
+      }
     } catch (error) {
       console.error(`Error executing schedule ${schedule.name}:`, error);
     }
@@ -332,6 +369,19 @@ class ScheduleService {
 
     } catch (error) {
       console.error('Error in auto-off switch:', error);
+    }
+  }
+
+  // Stub: Emit extension_requested event when students request more time
+  emitExtensionRequested({ deviceId, switchId, requestedBy, requestedMinutes }) {
+    if (global.io) {
+      global.io.emit('extension_requested', {
+        deviceId,
+        switchId,
+        requestedBy,
+        requestedMinutes,
+        timestamp: Date.now()
+      });
     }
   }
 

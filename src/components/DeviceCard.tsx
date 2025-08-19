@@ -22,12 +22,12 @@ interface DeviceCardProps {
 export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDeleteDevice }: DeviceCardProps) {
 
   return (
-    <Card className="w-full">
+    <Card className="w-full max-w-xs sm:max-w-sm p-2 sm:p-4 rounded-lg shadow bg-card flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">
           {device.name}
         </CardTitle>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end mt-2">
           <Badge variant={device.status === 'online' ? 'default' : 'secondary'}>
             {device.status === 'online' ? (
               <Wifi className="w-3 h-3 mr-1" />
@@ -39,7 +39,7 @@ export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDel
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-8 w-8 shrink-0"
             onClick={() => onEditDevice && onEditDevice(device)}
           >
             <Settings className="h-4 w-4" />
@@ -48,7 +48,7 @@ export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDel
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-destructive"
+              className="h-8 w-8 text-destructive shrink-0"
               onClick={() => onDeleteDevice(device.id)}
             >
               <Trash2 className="h-4 w-4" />

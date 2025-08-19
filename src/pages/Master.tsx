@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 import { MasterSwitchCard } from '@/components/MasterSwitchCard';
@@ -6,10 +5,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Power, Lightbulb, Fan, Zap, Home, Building2, FlaskConical } from 'lucide-react';
+import { Cpu } from 'lucide-react';
 import { useDevices } from '@/hooks/useDevices';
 import { useToast } from '@/hooks/use-toast';
 
 const Master = () => {
+  const [typeFilter, setTypeFilter] = React.useState<string>('all');
   const { devices, toggleAllSwitches, bulkToggleType, toggleDeviceAllSwitches } = useDevices();
   const { toast } = useToast();
 
@@ -41,6 +42,8 @@ const Master = () => {
   const rawTypeGroups: Record<string, typeof liveSwitches> = {
     light: liveSwitches.filter(sw => sw.type === 'light'),
     fan: liveSwitches.filter(sw => sw.type === 'fan'),
+    projector: liveSwitches.filter(sw => sw.type === 'projector'),
+    ac: liveSwitches.filter(sw => sw.type === 'ac'),
     outlet: liveSwitches.filter(sw => sw.type === 'outlet'),
     relay: liveSwitches.filter(sw => sw.type === 'relay')
   };
@@ -161,13 +164,13 @@ const Master = () => {
   };
 
   return (
-      <div className="space-y-6">
+      <div className="space-y-8 px-2 sm:px-8 py-4">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-foreground">
+            <h1 className="text-4xl font-extrabold tracking-tight text-foreground drop-shadow mb-2">
               Master Control
             </h1>
-            <p className="text-muted-foreground mt-1">
+            <p className="text-base text-muted-foreground mt-1 mb-2">
               Control all devices and switches from one place
             </p>
           </div>
@@ -182,8 +185,8 @@ const Master = () => {
           isBusy={false}
         />
 
-        {/* Summary Stats */}
-        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+        {/* Summary Stats - Move above Bulk Control by Type */}
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4 mb-8">
           <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
             <span className="text-xs uppercase tracking-wide text-muted-foreground">Devices Online</span>
             <span className="text-xl font-semibold">{onlineDevices}</span>
@@ -192,74 +195,161 @@ const Master = () => {
             <span className="text-xs uppercase tracking-wide text-muted-foreground">Devices Offline</span>
             <span className="text-xl font-semibold">{offlineDevices}</span>
           </div>
-            <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">Live Switches On</span>
-              <span className="text-xl font-semibold">{activeSwitches}</span>
-              {offlineActiveSwitches > 0 && (
-                <span className="text-[10px] mt-1 text-muted-foreground">+{offlineActiveSwitches} offline last-known on</span>
-              )}
-            </div>
-            <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
-              <span className="text-xs uppercase tracking-wide text-muted-foreground">Switches Off</span>
-              <span className="text-xl font-semibold">{switchesOff}</span>
-            </div>
+          <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
+            <span className="text-xs uppercase tracking-wide text-muted-foreground">Live Switches On</span>
+            <span className="text-xl font-semibold">{activeSwitches}</span>
+            {offlineActiveSwitches > 0 && (
+              <span className="text-[10px] mt-1 text-muted-foreground">+{offlineActiveSwitches} offline last-known on</span>
+            )}
+          </div>
+          <div className="p-4 rounded-md border bg-muted/30 flex flex-col items-start">
+            <span className="text-xs uppercase tracking-wide text-muted-foreground">Switches Off</span>
+            <span className="text-xl font-semibold">{switchesOff}</span>
+          </div>
         </div>
 
-        {/* Quick Controls by Type (hidden if all empty) */}
-        {hasTypeGroups && (
-          <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Control by Type</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {Object.entries(switchesByType).map(([type, switches]) => {
-                const activeCount = switches.filter(sw => sw.state).length;
-                const total = switches.length;
-                const allOn = activeCount === total && total > 0;
-                const getIcon = () => {
-                  switch (type) {
-                    case 'light': return <Lightbulb className="w-5 h-5" />;
-                    case 'fan': return <Fan className="w-5 h-5" />;
-                    case 'outlet': return <Power className="w-5 h-5" />;
-                    case 'relay': return <Zap className="w-5 h-5" />;
-                    default: return <Zap className="w-5 h-5" />;
-                  }
-                };
-                const label = `${type.charAt(0).toUpperCase()+type.slice(1)}s`;
-                const onlineInGroup = switches.some(sw => sw.deviceStatus === 'online');
-                return (
-                  <Card key={type} className="glass">
-                    <CardHeader className="pb-3">
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        {getIcon()} {label}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-muted-foreground">
-                            {activeCount} on / {total - activeCount} off
-                          </p>
-                        </div>
+        {/* Bulk Control by Type (Lights, Fan, Projector, Computing) - Card Style Like Block & Floor, placed below summary stats */}
+        <div className="space-y-4">
+          <h2 className="text-2xl font-bold mb-2 text-foreground">Bulk Control by Type</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {['light', 'fan', 'projector', 'computing', 'outlet', 'relay'].map(type => {
+              const switches = switchesByType[type] || [];
+              const activeCount = switches.filter(sw => sw.state).length;
+              const total = switches.length;
+              const allOn = activeCount === total && total > 0;
+              const onlineInGroup = switches.some(sw => sw.deviceStatus === 'online');
+              const label = `${type.charAt(0).toUpperCase() + type.slice(1)}s`;
+              const icon = (() => {
+                switch (type) {
+                  case 'light': return <Lightbulb className="w-5 h-5" />;
+                  case 'fan': return <Fan className="w-5 h-5" />;
+                  case 'projector': return <Zap className="w-5 h-5" />;
+                  case 'computing': return <Cpu className="w-5 h-5" />;
+                  case 'outlet': return <Power className="w-5 h-5" />;
+                  case 'relay': return <Zap className="w-5 h-5" />;
+                  default: return <Zap className="w-5 h-5" />;
+                }
+              })();
+              return (
+                <Card key={type} className="rounded-xl shadow bg-card hover:shadow-xl transition-shadow border border-border">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                      {icon} {label}
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <div>
+                        <p className="text-sm text-muted-foreground">
+                          {activeCount} of {total} switches on
+                        </p>
+                      </div>
+                      <div className="flex gap-2 flex-wrap">
                         <Button
-                          variant={allOn ? 'default' : 'outline'}
+                          variant="default"
                           size="sm"
-                          onClick={() => handleTypeToggle(type, !allOn)}
-                          disabled={!onlineInGroup}
+                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
+                          aria-label={`Turn on all ${label}`}
+                          onClick={() => handleTypeToggle(type, true)}
+                          disabled={total === 0 || !onlineInGroup || allOn}
                         >
-                          {allOn ? 'Turn Off' : 'Turn On'}
+                          Turn On
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
+                          aria-label={`Turn off all ${label}`}
+                          onClick={() => handleTypeToggle(type, false)}
+                          disabled={total === 0 || !onlineInGroup || activeCount === 0}
+                        >
+                          Turn Off
                         </Button>
                       </div>
-                      <Badge variant="secondary" className="w-fit">{total} {type}s</Badge>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                    </div>
+                    <Badge variant="secondary" className="w-fit">{total} switches</Badge>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Quick Controls by Type with filter dropdown */}
+        {hasTypeGroups && (
+          <div className="space-y-4">
+            <h2 className="text-2xl font-bold mb-2 text-foreground">Control by Type</h2>
+            <div className="mb-2 flex gap-2 items-center">
+              <label htmlFor="typeFilter" className="text-sm font-medium">Filter:</label>
+              <select
+                id="typeFilter"
+                value={typeFilter}
+                onChange={e => setTypeFilter(e.target.value)}
+                className="border rounded px-2 py-1 text-sm"
+              >
+                <option value="all">All</option>
+                {Object.keys(switchesByType).map(type => (
+                  <option key={type} value={type}>{type.charAt(0).toUpperCase()+type.slice(1)}s</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {Object.entries(switchesByType)
+                .filter(([type]) => typeFilter === 'all' || typeFilter === type)
+                .map(([type, switches]) => {
+                  const activeCount = switches.filter(sw => sw.state).length;
+                  const total = switches.length;
+                  const allOn = activeCount === total && total > 0;
+                  const getIcon = () => {
+                    switch (type) {
+                      case 'light': return <Lightbulb className="w-5 h-5" />;
+                      case 'fan': return <Fan className="w-5 h-5" />;
+                      case 'outlet': return <Power className="w-5 h-5" />;
+                      case 'relay': return <Zap className="w-5 h-5" />;
+                      case 'projector': return <Zap className="w-5 h-5" />;
+                      case 'computing': return <Cpu className="w-5 h-5" />;
+                      default: return <Zap className="w-5 h-5" />;
+                    }
+                  };
+                  const label = `${type.charAt(0).toUpperCase()+type.slice(1)}s`;
+                  const onlineInGroup = switches.some(sw => sw.deviceStatus === 'online');
+                  return (
+                    <Card key={type} className="rounded-xl shadow bg-card hover:shadow-xl transition-shadow border border-border">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                          {getIcon()} {label}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-sm text-muted-foreground">
+                              {activeCount} on / {total - activeCount} off
+                            </p>
+                          </div>
+                          <Button
+                            variant={allOn ? 'default' : 'outline'}
+                            size="sm"
+                            className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
+                            aria-label={allOn ? `Turn off all ${label}` : `Turn on all ${label}`}
+                            onClick={() => handleTypeToggle(type, !allOn)}
+                            disabled={!onlineInGroup}
+                          >
+                            {allOn ? 'Turn Off' : 'Turn On'}
+                          </Button>
+                        </div>
+                        <Badge variant="secondary" className="w-fit">{total} {type}s</Badge>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
             </div>
           </div>
         )}
 
-        {/* Control by Block / Floor */}
+        {/* Control by Block / Floor - Show both Turn On and Turn Off buttons */}
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Control by Block & Floor</h2>
+          <h2 className="text-2xl font-bold mb-2 text-foreground">Control by Block & Floor</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {sortedBlockFloorEntries.map(([key, switches]) => {
               const [block, floor] = key.split('::');
@@ -268,28 +358,42 @@ const Master = () => {
               const allOn = activeCount === total && total > 0;
               const anyOnline = switches.some(sw => sw.deviceStatus === 'online');
               return (
-                <Card key={key} className="glass">
+                <Card key={key} className="rounded-xl shadow bg-card hover:shadow-xl transition-shadow border border-border">
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-lg flex items-center gap-2">
+                    <CardTitle className="text-lg font-semibold flex items-center gap-2">
                       <Building2 className="w-5 h-5" />
                       Block {block} • Floor {floor}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                       <div>
                         <p className="text-sm text-muted-foreground">
                           {activeCount} of {total} switches on
                         </p>
                       </div>
-                      <Button
-                        variant={allOn ? 'default' : 'outline'}
-                        size="sm"
-                        onClick={() => handleBlockFloorToggle(block, floor, !allOn)}
-                        disabled={total === 0 || !anyOnline}
-                      >
-                        {allOn ? 'Turn Off' : 'Turn On'}
-                      </Button>
+                      <div className="flex gap-2 flex-wrap">
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
+                          aria-label={`Turn on all switches in Block ${block} Floor ${floor}`}
+                          onClick={() => handleBlockFloorToggle(block, floor, true)}
+                          disabled={total === 0 || !anyOnline || allOn}
+                        >
+                          Turn On
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
+                          aria-label={`Turn off all switches in Block ${block} Floor ${floor}`}
+                          onClick={() => handleBlockFloorToggle(block, floor, false)}
+                          disabled={total === 0 || !anyOnline || activeCount === 0}
+                        >
+                          Turn Off
+                        </Button>
+                      </div>
                     </div>
                     <Badge variant="secondary" className="w-fit">{total} switches</Badge>
                   </CardContent>
@@ -302,7 +406,7 @@ const Master = () => {
         {/* Labs */}
         {labEntries.length > 0 && (
           <div className="space-y-4">
-            <h2 className="text-xl font-semibold">Labs</h2>
+            <h2 className="text-2xl font-bold mb-2 text-foreground">Labs</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {labEntries.map(([labLocation, switches]) => {
                 const activeCount = switches.filter(sw => sw.state).length;
@@ -310,9 +414,9 @@ const Master = () => {
                 const allOn = activeCount === total && total > 0;
                 const anyOnline = switches.some(sw => sw.deviceStatus === 'online');
                 return (
-                  <Card key={labLocation} className="glass">
+                  <Card key={labLocation} className="rounded-xl shadow bg-card hover:shadow-xl transition-shadow border border-border">
                     <CardHeader className="pb-3">
-                      <CardTitle className="text-lg flex items-center gap-2">
+                      <CardTitle className="text-lg font-semibold flex items-center gap-2">
                         <FlaskConical className="w-5 h-5" />
                         {labLocation}
                       </CardTitle>
@@ -327,6 +431,8 @@ const Master = () => {
                         <Button
                           variant={allOn ? 'default' : 'outline'}
                           size="sm"
+                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
+                          aria-label={allOn ? `Turn off all switches in ${labLocation}` : `Turn on all switches in ${labLocation}`}
                           onClick={() => handleLabToggle(labLocation, !allOn)}
                           disabled={total === 0 || !anyOnline}
                         >

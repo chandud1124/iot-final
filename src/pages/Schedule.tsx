@@ -347,6 +347,25 @@ const Schedule = () => {
     }
   };
 
+  const handleRequestExtension = async (scheduleId: string) => {
+    try {
+      const response = await api.post(`/schedules/${scheduleId}/request-extension`);
+      if (response.data.success) {
+        toast({
+          title: "Extension Requested",
+          description: "Your request for schedule extension has been sent."
+        });
+      }
+    } catch (error) {
+      console.error('Request extension error:', error);
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to request extension",
+        variant: "destructive"
+      });
+    }
+  };
+
   return (
       <div className="space-y-6">
         {/* Google Calendar Integration */}
@@ -470,7 +489,7 @@ const Schedule = () => {
                         {schedule.switches.length} device(s) selected
                       </div>
                     </div>
-                    <div className="flex gap-2 pt-2">
+                    <div className="flex gap-2 pt-2 flex-wrap">
                       <Button
                         size="sm"
                         variant="outline"
@@ -502,6 +521,16 @@ const Schedule = () => {
                         onClick={() => handleDeleteSchedule(schedule.id)}
                       >
                         <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                    <div className="pt-2">
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="w-full"
+                        onClick={() => handleRequestExtension(schedule.id)}
+                      >
+                        Request Extension
                       </Button>
                     </div>
                   </div>

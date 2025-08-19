@@ -29,8 +29,7 @@ const switchSchema = z.object({
   manualSwitchEnabled: z.boolean().default(false),
   manualSwitchGpio: z.number().min(0,{message:'Required when manual is enabled'}).max(39).optional().refine(p=>p===undefined || !RESERVED.has(p),'Reserved pin (6-11)'),
   manualMode: z.enum(['maintained','momentary']).default('maintained'),
-  manualActiveLow: z.boolean().default(true),
-  linkedRelayGpios: z.array(z.number().min(0).max(39)).default([])
+  manualActiveLow: z.boolean().default(true)
 }).refine(s => !s.manualSwitchEnabled || s.manualSwitchGpio !== undefined, {
   message: 'Choose a manual switch GPIO when manual is enabled',
   path: ['manualSwitchGpio']
@@ -263,31 +262,6 @@ export const DeviceConfigDialog: React.FC<Props> = ({open,onOpenChange,onSubmit,
                                   ))}
                                 </SelectContent>
                               </Select>
-                              <FormMessage />
-                            </FormItem>
-                          );
-                        }} />
-                        <FormField control={form.control} name={`switches.${idx}.linkedRelayGpios`} render={({field}) => {
-                          // Multi-select for relay GPIOs to link to this manual switch
-                          const all=form.watch('switches')||[];
-                          // Only show relay-type switches
-                          const relaySwitches = all.filter((s,i)=>s.type==='relay' && i!==idx);
-                          const options = relaySwitches.map(s=>({label:`${s.name || 'Relay'} (GPIO ${s.gpio})`, value:s.gpio}));
-                          const selected = Array.isArray(field.value) ? field.value : [];
-                          return (
-                            <FormItem>
-                              <FormLabel>Linked Relay GPIOs</FormLabel>
-                              <div className="flex flex-wrap gap-2">
-                                {options.map(opt=>(
-                                  <label key={opt.value} className="flex items-center gap-1">
-                                    <input type="checkbox" checked={selected.includes(opt.value)} onChange={e=>{
-                                      const next = e.target.checked ? [...selected,opt.value] : selected.filter(v=>v!==opt.value);
-                                      field.onChange(next);
-                                    }} />
-                                    <span>{opt.label}</span>
-                                  </label>
-                                ))}
-                              </div>
                               <FormMessage />
                             </FormItem>
                           );
