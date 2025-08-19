@@ -448,6 +448,12 @@ io.on('connection', (socket) => {
   // Emit a hello for quick handshake debug
   socket.emit('server_hello', { ts: Date.now() });
 
+  // Heartbeat handler for ESP32 and clients
+  socket.on('heartbeat', (data) => {
+    logger.info(`Heartbeat from ${socket.id}:`, data);
+    socket.emit('heartbeat_ack', { ts: Date.now() });
+  });
+
   socket.on('join-room', (room) => {
     try {
       socket.join(room);

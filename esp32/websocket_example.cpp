@@ -1,3 +1,53 @@
+#include <EEPROM.h>
+#define EEPROM_CONFIG_ADDR 32
+
+void saveSwitchConfigToEEPROM(const JsonArray& arr) {
+  EEPROM.write(0, CONFIG_VERSION);
+  int addr = EEPROM_CONFIG_ADDR;
+  for (JsonObject o : arr) {
+    EEPROM.write(addr++, o["gpio"].as<int>());
+    EEPROM.write(addr++, o["manualSwitchGpio"].as<int>());
+    EEPROM.write(addr++, o["manualSwitchEnabled"].as<bool>() ? 1 : 0);
+    EEPROM.write(addr++, o["manualActiveLow"].as<bool>() ? 1 : 0);
+    EEPROM.write(addr++, o["manualMode"].is<const char*>() && strcmp(o["manualMode"], "momentary") == 0 ? 1 : 0);
+  }
+  EEPROM.commit();
+  Serial.println("[EEPROM] Switch config saved");
+}
+
+void loadSwitchConfigFromEEPROM(JsonArray& arr) {
+  if (EEPROM.read(0) != CONFIG_VERSION) {
+    Serial.println("[EEPROM] No valid config found");
+    return;
+  }
+  int addr = EEPROM_CONFIG_ADDR;
+  for (int i = 0; i < MAX_SWITCHES; ++i) {
+    int gpio = EEPROM.read(addr++);
+    int manualGpio = EEPROM.read(addr++);
+    bool manualEnabled = EEPROM.read(addr++);
+    bool manualActiveLow = EEPROM.read(addr++);
+    bool manualMomentary = EEPROM.read(addr++);
+    if (gpio < 0 || gpio > 39) break;
+    JsonObject o = arr.createNestedObject();
+    o["gpio"] = gpio;
+    o["manualSwitchGpio"] = manualGpio;
+    o["manualSwitchEnabled"] = manualEnabled;
+    o["manualActiveLow"] = manualActiveLow;
+    o["manualMode"] = manualMomentary ? "momentary" : "maintained";
+  }
+  Serial.println("[EEPROM] Switch config loaded");
+}
+  saveSwitchConfigToEEPROM(arr);
+  // Try to load config from EEPROM if backend is unreachable
+  if (!identified) {
+    DynamicJsonDocument doc(512);
+    JsonArray arr = doc.createNestedArray("switches");
+    loadSwitchConfigFromEEPROM(arr);
+    if (arr.size() > 0) {
+      loadConfigFromJsonArray(arr);
+      Serial.println("[CONFIG] Loaded switches from EEPROM (offline mode)");
+    }
+  }
 // -----------------------------------------------------------------------------
 // Dynamic ESP32 <-> Backend WebSocket example with runtime pin config
 // Endpoint: ws://<HOST>:3001/esp32-ws  (server.js)
@@ -33,8 +83,8 @@
 #include <mbedtls/md.h>
 #endif
 #include <vector>
-#define HEARTBEAT_MS 15000UL          // 15s heartbeat interval for faster connection issue detection
-#define DEVICE_SECRET "87cf1b5017a8486106a9a234d149f7ddfdf56f7b648af688" // device secret from backend
+#define HEARTBEAT_MS 1000UL           // 1s heartbeat interval for constant backend communication
+#define DEVICE_SECRET "6af44c010af8ba58514c6fa989c6e6d3469068f2d8da19a4" // device secret from backend
 
 // Optional status LED (set to 255 to disable if your board lacks LED_BUILTIN)
 #ifndef STATUS_LED_PIN
@@ -482,11 +532,13 @@ void loop() {
       if (sw.manualMomentary) {
         if (logicalActive && !sw.lastManualActive) {
           bool newState = !sw.state;
+          Serial.printf("[MANUAL][TOGGLE] gpio=%d manualGpio=%d newState=%d\n", sw.gpio, sw.manualGpio, newState ? 1 : 0);
           applySwitchState(sw.gpio, newState);
           anyManualToggled = true;
         }
       } else {
         if (logicalActive != sw.state) {
+          Serial.printf("[MANUAL][SET] gpio=%d manualGpio=%d logicalActive=%d\n", sw.gpio, sw.manualGpio, logicalActive ? 1 : 0);
           applySwitchState(sw.gpio, logicalActive);
           anyManualToggled = true;
         }

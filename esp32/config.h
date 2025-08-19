@@ -63,23 +63,11 @@
 #define STAGGER_RELAY_APPLY_MS 80  // apply each relay change with this spacing
 #endif
 
-// Optional: enable a single-switch offline fallback so manual input works
-// even before the device connects and receives config from the backend.
-// Set to 1 to enable. Configure the pins below for your wiring.
+
+// --- Offline Fallback: Manual switch works when ESP32 is offline ---
 #ifndef ENABLE_OFFLINE_FALLBACK
-#define ENABLE_OFFLINE_FALLBACK 1
+#define ENABLE_OFFLINE_FALLBACK 0 // Set to 0 to disable offline manual switch fallback
 #endif
-#ifndef FALLBACK_RELAY_GPIO
-#define FALLBACK_RELAY_GPIO 27
-#endif
-#ifndef FALLBACK_MANUAL_GPIO
-#define FALLBACK_MANUAL_GPIO 14
-#endif
-#ifndef FALLBACK_MANUAL_ACTIVE_LOW
-#define FALLBACK_MANUAL_ACTIVE_LOW 1  // 1 = button to GND with INPUT_PULLUP
-#endif
-#ifndef FALLBACK_MANUAL_MOMENTARY
-#define FALLBACK_MANUAL_MOMENTARY 0   // 0 = maintained; 1 = momentary
-#endif
+// Fallback pins are now disabled. ESP32 will use only backend config for switch assignments.
 
 #endif
