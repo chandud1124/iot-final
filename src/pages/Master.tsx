@@ -208,72 +208,7 @@ const Master = () => {
           </div>
         </div>
 
-        {/* Bulk Control by Type (Lights, Fan, Projector, Computing) - Card Style Like Block & Floor, placed below summary stats */}
-        <div className="space-y-4">
-          <h2 className="text-2xl font-bold mb-2 text-foreground">Bulk Control by Type</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {['light', 'fan', 'projector', 'computing', 'outlet', 'relay'].map(type => {
-              const switches = switchesByType[type] || [];
-              const activeCount = switches.filter(sw => sw.state).length;
-              const total = switches.length;
-              const allOn = activeCount === total && total > 0;
-              const onlineInGroup = switches.some(sw => sw.deviceStatus === 'online');
-              const label = `${type.charAt(0).toUpperCase() + type.slice(1)}s`;
-              const icon = (() => {
-                switch (type) {
-                  case 'light': return <Lightbulb className="w-5 h-5" />;
-                  case 'fan': return <Fan className="w-5 h-5" />;
-                  case 'projector': return <Zap className="w-5 h-5" />;
-                  case 'computing': return <Cpu className="w-5 h-5" />;
-                  case 'outlet': return <Power className="w-5 h-5" />;
-                  case 'relay': return <Zap className="w-5 h-5" />;
-                  default: return <Zap className="w-5 h-5" />;
-                }
-              })();
-              return (
-                <Card key={type} className="rounded-xl shadow bg-card hover:shadow-xl transition-shadow border border-border">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                      {icon} {label}
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                      <div>
-                        <p className="text-sm text-muted-foreground">
-                          {activeCount} of {total} switches on
-                        </p>
-                      </div>
-                      <div className="flex gap-2 flex-wrap">
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
-                          aria-label={`Turn on all ${label}`}
-                          onClick={() => handleTypeToggle(type, true)}
-                          disabled={total === 0 || !onlineInGroup || allOn}
-                        >
-                          Turn On
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="rounded-full focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 transition-transform hover:scale-105"
-                          aria-label={`Turn off all ${label}`}
-                          onClick={() => handleTypeToggle(type, false)}
-                          disabled={total === 0 || !onlineInGroup || activeCount === 0}
-                        >
-                          Turn Off
-                        </Button>
-                      </div>
-                    </div>
-                    <Badge variant="secondary" className="w-fit">{total} switches</Badge>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </div>
+
 
         {/* Quick Controls by Type with filter dropdown */}
         {hasTypeGroups && (
@@ -285,7 +220,7 @@ const Master = () => {
                 id="typeFilter"
                 value={typeFilter}
                 onChange={e => setTypeFilter(e.target.value)}
-                className="border rounded px-2 py-1 text-sm"
+                className="border rounded px-2 py-1 text-sm bg-muted/30 focus:bg-muted/50"
               >
                 <option value="all">All</option>
                 {Object.keys(switchesByType).map(type => (
