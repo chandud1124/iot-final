@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, createContext, useContext, use
 import { Device, DeviceStats } from '@/types';
 import { deviceAPI } from '@/services/api';
 import { useSecurityNotifications } from './useSecurityNotifications';
-import socketService from '@/services/socketService';
+import { onStateUpdate, sendSwitchCommand, socketService } from '@/services/wsService';
 
 // Internal hook (not exported directly) so we can provide a context-backed singleton
 const useDevicesInternal = () => {
@@ -162,137 +162,30 @@ const useDevicesInternal = () => {
   loadDevices({ force: true });
 
     // Set up socket listeners
-    socketService.onDeviceStateChanged(handleDeviceStateChanged);
-    socketService.onDevicePirTriggered(handleDevicePirTriggered);
-    // When a device reconnects, flush queued toggles for it
-    const handleConnected = (data: { deviceId: string }) => {
-      setToggleQueue(prev => prev); // trigger state reference
-      const toProcess = toggleQueue.filter(t => t.deviceId === data.deviceId);
-      if (toProcess.length) {
-        // Process sequentially to maintain order
-        (async () => {
-          for (const intent of toProcess) {
-            try {
-              await toggleSwitch(intent.deviceId, intent.switchId);
-            } catch (e) {
-              console.warn('Failed to flush queued toggle', intent, e);
-            }
-          }
-          // Remove processed intents
-          setToggleQueue(prev => prev.filter(t => t.deviceId !== data.deviceId));
-        })();
-      }
-    };
-    socketService.onDeviceConnected(handleConnected);
-    const handleToggleBlocked = (payload: any) => {
-      // Ignore stale_seq failures (idempotent drops) to avoid noisy UI
-      if (payload?.reason === 'stale_seq') return;
-      console.warn('device_toggle_blocked', payload);
-      setDevices(prev => prev.map(d => {
-        if (d.id !== payload.deviceId) return d;
-        if (!payload.switchGpio || payload.actualState === undefined) return d;
-        const updated = d.switches.map(sw => (((sw as any).relayGpio ?? (sw as any).gpio) === payload.switchGpio) ? { ...sw, state: payload.actualState } : sw);
-        return { ...d, switches: updated };
-      }));
-      // Light reconciliation: if actualState missing or still inconsistent after small delay, reload that device
-      if (payload.actualState === undefined) {
-        setTimeout(()=> loadDevices({ force:true, background:true }), 400);
-      }
-    };
-    socketService.on('device_toggle_blocked', handleToggleBlocked);
-    const handleBulkSync = (payload: any) => {
-      if (!payload || !Array.isArray(payload.devices)) return;
-      setDevices(prev => prev.map(d => {
-        const snap = payload.devices.find((x: any) => x.deviceId === d.id);
-        if (!snap) return d;
-        const updatedSwitches = d.switches.map(sw => {
-          const swSnap = snap.switches.find((s: any) => (s.id || s._id) === sw.id || (s.id || s._id) === (sw as any)._id);
-          return swSnap ? { ...sw, state: swSnap.state } : sw;
-        });
-        return { ...d, switches: updatedSwitches, _lastBulkTs: payload.ts } as any;
-      }));
-      setBulkPending(null);
-    };
-    socketService.on('bulk_state_sync', handleBulkSync);
-    socketService.on('switch_intent', handleSwitchIntent);
-    // Handle bulk intent: mark pending on affected devices without flipping state
-    const handleBulkIntent = (payload: any) => {
-      if (!payload || !Array.isArray(payload.deviceIds)) return;
-      const desired = !!payload.desiredState;
-      const ids = new Set<string>(payload.deviceIds as string[]);
-      setBulkPending({ desiredState: desired, startedAt: Date.now(), deviceIds: ids });
-      setDevices(prev => prev.map(d => {
-        if (!ids.has(d.id)) return d;
-        const updated = d.switches.map(sw => ({ ...sw, /* @ts-ignore */ _pending: true } as any));
-        return { ...d, switches: updated } as any;
-      }));
-      setTimeout(() => {
-        setDevices(prev => prev.map(d => {
-          if (!ids.has(d.id)) return d;
-          const updated = d.switches.map(sw => { const anySw: any = sw; delete anySw._pending; return anySw; });
-          return { ...d, switches: updated } as any;
-        }));
-      }, 1500);
-    };
-    socketService.on('bulk_switch_intent', handleBulkIntent);
-    // New: handle config_update to reflect switch additions/removals immediately
-    const handleConfigUpdate = (cfg: any) => {
-      if (!cfg || !cfg.deviceId) return;
-      setDevices(prev => prev.map(d => {
-        if (d.id !== cfg.deviceId) return d;
-        // Build new switch list from cfg.switches preserving known local states when possible
-        const incoming = Array.isArray(cfg.switches) ? cfg.switches : [];
-        const mapped = incoming.map((sw: any) => {
-          const existing = d.switches.find(esw => esw.id === (sw.id || sw._id) || esw.name === sw.name);
-            return {
-              ...(existing || {}),
-              ...sw,
-              id: sw.id || sw._id?.toString(),
-              relayGpio: sw.relayGpio ?? sw.gpio,
-              state: sw.state // backend authoritative here
-            };
-        });
-        return { ...d, switches: mapped };
-      }));
-    };
-    socketService.on('config_update', handleConfigUpdate);
-    const handleSwitchResult = (payload: any) => {
-      if (!payload || !payload.deviceId || payload.gpio === undefined) return;
-      // If firmware reports stale_seq, it's an idempotent drop; still apply actualState if present
-      setDevices(prev => prev.map(d => {
-        if (d.id !== payload.deviceId) return d;
-        const updated = d.switches.map(sw => {
-          const gpio = (sw as any).relayGpio ?? (sw as any).gpio;
-          if (gpio === payload.gpio) {
-            if (payload.actualState !== undefined) {
-              return { ...sw, state: payload.actualState };
-            }
-          }
-          return sw;
-        });
-        return { ...d, switches: updated };
-      }));
-    };
-    socketService.on('switch_result', handleSwitchResult);
-    const handleIdentifyError = (payload: any) => {
-      console.warn('[identify_error]', payload);
-      // Force refresh so UI shows device as offline/unregistered accurately
-      loadDevices({ force: true, background: true });
-    };
-    socketService.on('identify_error', handleIdentifyError);
+    // TODO: Replace with native WebSocket logic from wsService.js
+    // socketService.onDeviceStateChanged(handleDeviceStateChanged);
+    // socketService.onDevicePirTriggered(handleDevicePirTriggered);
+    // socketService.onDeviceConnected(handleConnected);
+    // socketService.on('device_toggle_blocked', handleToggleBlocked);
+    // socketService.on('bulk_state_sync', handleBulkSync);
+    // socketService.on('switch_intent', handleSwitchIntent);
+    // socketService.on('bulk_switch_intent', handleBulkIntent);
+    // socketService.on('config_update', handleConfigUpdate);
+    // socketService.on('switch_result', handleSwitchResult);
+    // socketService.on('identify_error', handleIdentifyError);
 
     return () => {
       // Clean up socket listeners
-      socketService.off('device_state_changed', handleDeviceStateChanged);
-      socketService.off('device_pir_triggered', handleDevicePirTriggered);
-      socketService.off('device_connected', handleConnected);
-      socketService.off('device_toggle_blocked', handleToggleBlocked);
-  socketService.off('bulk_state_sync', handleBulkSync);
-  socketService.off('switch_intent', handleSwitchIntent);
-  socketService.off('bulk_switch_intent', handleBulkIntent);
-      socketService.off('config_update', handleConfigUpdate);
-      socketService.off('switch_result', handleSwitchResult);
-  socketService.off('identify_error', handleIdentifyError);
+    // socketService.off('device_state_changed', handleDeviceStateChanged);
+    // socketService.off('device_pir_triggered', handleDevicePirTriggered);
+    // socketService.off('device_connected', handleConnected);
+    // socketService.off('device_toggle_blocked', handleToggleBlocked);
+    // socketService.off('bulk_state_sync', handleBulkSync);
+    // socketService.off('switch_intent', handleSwitchIntent);
+    // socketService.off('bulk_switch_intent', handleBulkIntent);
+    // socketService.off('config_update', handleConfigUpdate);
+    // socketService.off('switch_result', handleSwitchResult);
+    // socketService.off('identify_error', handleIdentifyError);
     };
   }, [handleDeviceStateChanged, handleDevicePirTriggered]);
 
