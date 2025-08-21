@@ -23,19 +23,10 @@ interface DeviceCardProps {
 
 
 export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDeleteDevice }: DeviceCardProps) {
-  const [switchStates, setSwitchStates] = useState({});
-
-  useEffect(() => {
-    onStateUpdate((data) => {
-      setSwitchStates((prev) => ({ ...prev, [data.gpio]: data.state }));
-    });
-  }, []);
-
-  const handleToggle = (gpio: number) => {
-    const newState = !switchStates[gpio];
-    setSwitchStates((prev) => ({ ...prev, [gpio]: newState }));
+  const handleToggle = (gpio: number, currentState: boolean) => {
+    const newState = !currentState;
     sendSwitchCommand(gpio, newState);
-  };
+  }
 
   return (
     <Card className="w-full max-w-xs sm:max-w-sm p-2 sm:p-4 rounded-lg shadow bg-card flex flex-col">
@@ -92,7 +83,7 @@ export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDel
                 <SwitchControl
                   key={switch_.id || (switch_ as any)._id || `${switch_.name}-${gpio || i}`}
                   switch={switch_}
-                  onToggle={() => handleToggle(gpio)}
+                  onToggle={() => handleToggle(gpio, switch_.state)}
                   disabled={device.status !== 'online'}
                   isPirActive={(() => {
                     if (!switch_.usePir || !device.pirEnabled) return false;
