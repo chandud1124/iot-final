@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, createContext, useContext, use
 import { Device, DeviceStats } from '@/types';
 import { deviceAPI } from '@/services/api';
 import { useSecurityNotifications } from './useSecurityNotifications';
-import { onStateUpdate, sendSwitchCommand, socketService } from '@/services/wsService';
+import { onStateUpdate, sendSwitchCommand } from '@/services/wsService';
 
 // Internal hook (not exported directly) so we can provide a context-backed singleton
 const useDevicesInternal = () => {
@@ -159,49 +159,16 @@ const useDevicesInternal = () => {
   }
 
   useEffect(() => {
-  loadDevices({ force: true });
-
+    loadDevices({ force: true });
     // Set up WebSocket listeners for real-time device state sync
-    socketService.onDeviceStateChanged(handleDeviceStateChanged);
-    // You can add other listeners here as needed
-    return () => {
-      socketService.off('device_state_changed', handleDeviceStateChanged);
-      // Clean up other listeners if added
-    };
+    onStateUpdate(handleDeviceStateChanged);
+    // No cleanup needed for wsService.js
+    return () => {};
   }, [handleDeviceStateChanged, handleDevicePirTriggered]);
 
   // Periodic fallback refresh if socket disconnected or stale
   useEffect(() => {
-    let reconnectAttempts = 0;
-    const interval = setInterval(() => {
-      if (!socketService.isConnected()) {
-        reconnectAttempts++;
-        // Try to reconnect socket
-        try {
-          socketService.disconnect();
-          // Recreate the socket instance
-          // @ts-ignore
-          socketService.socket?.connect();
-        } catch {}
-        // Reload device state after reconnect attempt
-        loadDevices({ background: true, force: true });
-        // Optionally notify user after several failed attempts
-        if (reconnectAttempts === 3) {
-          // eslint-disable-next-line no-console
-          console.warn('Connection lost. Trying to reconnect...');
-        }
-        if (reconnectAttempts > 10) {
-          // eslint-disable-next-line no-console
-          console.error('Unable to reconnect to backend. Please check your network or refresh the page.');
-        }
-      } else {
-        reconnectAttempts = 0;
-        if (Date.now() - lastLoaded > STALE_MS) {
-          loadDevices({ background: true, force: true });
-        }
-      }
-    }, 15000);
-    return () => clearInterval(interval);
+    // Removed socketService reconnect logic; wsService.js does not expose connection management
   }, [lastLoaded]);
 
   // (loadDevices function hoisted above)
