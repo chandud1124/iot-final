@@ -80,6 +80,23 @@ router.put('/:id/toggle', authorize('admin', 'faculty'), async (req, res) => {
 });
 
 // Run schedule immediately (for testing/debugging)
+// Request extension for a schedule
+router.post('/:id/request-extension', authorize('admin', 'faculty', 'student'), async (req, res) => {
+  try {
+    const schedule = await Schedule.findById(req.params.id);
+    if (!schedule) {
+      return res.status(404).json({ message: 'Schedule not found' });
+    }
+    // Example: mark extension requested (customize as needed)
+    schedule.extensionRequested = true;
+    await schedule.save();
+    res.json({ success: true, message: 'Extension requested' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Run schedule immediately (for testing/debugging)
 router.post('/:id/run', authorize('admin', 'faculty'), async (req, res) => {
   try {
     const schedule = await Schedule.findById(req.params.id);
