@@ -19,38 +19,44 @@ const useDevicesInternal = () => {
 
   const handleDeviceStateChanged = useCallback((data: { deviceId: string; state: Device; ts?: number; seq?: number; source?: string }) => {
     const eventTs = data.ts || Date.now();
+    console.log('[WS] Incoming state_update:', JSON.stringify(data));
     setDevices(prev => prev.map(device => {
-      if (device.id !== data.deviceId) return device;
+      if (device.id !== data.deviceId) {
+        console.log(`[WS] Device ID mismatch: incoming=${data.deviceId}, local=${device.id}`);
+        return device;
+      }
       const lastTs = (device as any)._lastEventTs || 0;
       const lastSeq = (device as any)._lastSeq || 0;
       if (data.seq && data.seq < lastSeq) {
-        if (process.env.NODE_ENV !== 'production') console.debug('[seq] drop stale event', { deviceId: device.id, incoming: data.seq, lastSeq });
+        console.debug('[seq] drop stale event', { deviceId: device.id, incoming: data.seq, lastSeq });
         return device; // stale by seq
       }
       if (eventTs < lastTs) return device; // stale by timestamp ordering
-      // Ignore stale events that pre-date last bulk snapshot applied
       const incomingUpdatedAt = (data.state as any).updatedAt ? new Date((data.state as any).updatedAt).getTime() : Date.now();
       if ((device as any)._lastBulkTs && incomingUpdatedAt < (device as any)._lastBulkTs) {
-        // stale relative to last bulk consolidation; skip
         return device;
       }
-      // Normalize incoming state switches to ensure id & relayGpio fields persist
       const normalizedSwitches = Array.isArray((data.state as any).switches)
-        ? (data.state as any).switches.map((sw: any) => ({
-            ...sw,
-            id: sw.id || sw._id?.toString(),
-            relayGpio: sw.relayGpio ?? sw.gpio
-          }))
+        ? (data.state as any).switches.map((sw: any) => {
+            const matchId = sw.id || sw._id?.toString();
+            const matchGpio = sw.relayGpio ?? sw.gpio;
+            const localSw = device.switches.find(esw => esw.id === matchId || esw.relayGpio === matchGpio || esw.gpio === matchGpio);
+            if (!localSw) {
+              console.log(`[WS] Switch mapping failed: incoming switch name=${sw.name}, gpio=${matchGpio}`);
+            }
+            return {
+              ...sw,
+              id: matchId,
+              relayGpio: matchGpio
+            };
+          })
         : [];
-  // Do not override server confirmations during bulk; trust normalizedSwitches
-      if (process.env.NODE_ENV !== 'production') {
-        const diff = normalizedSwitches.filter((sw: any) => {
-          const existing = device.switches.find(esw => esw.id === sw.id);
-          return existing && existing.state !== sw.state;
-        }).map(sw => ({ name: sw.name, id: sw.id, new: sw.state }));
-        if (diff.length) {
-          console.debug('[device_state_changed apply]', { deviceId: device.id, seq: data.seq, source: data.source, changed: diff });
-        }
+      const diff = normalizedSwitches.filter((sw: any) => {
+        const existing = device.switches.find(esw => esw.id === sw.id);
+        return existing && existing.state !== sw.state;
+      }).map(sw => ({ name: sw.name, id: sw.id, new: sw.state }));
+      if (diff.length) {
+        console.log('[device_state_changed apply]', { deviceId: device.id, seq: data.seq, source: data.source, changed: diff });
       }
       return { ...device, ...data.state, switches: normalizedSwitches, _lastEventTs: eventTs, _lastSeq: data.seq || lastSeq } as any;
     }));
