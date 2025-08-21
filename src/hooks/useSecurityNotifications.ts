@@ -2,7 +2,6 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
-// Removed socketService (Socket.IO) import
 
 interface SecurityAlert {
   id: string;
@@ -62,7 +61,6 @@ export const useSecurityNotifications = () => {
     return alerts.filter(alert => !alert.acknowledged).length;
   };
 
-  // Reuse existing socketService instead of ad‑hoc require() to avoid ESM require failures
   useEffect(() => {
     const handler = (payload: any) => {
       if (!user) return;

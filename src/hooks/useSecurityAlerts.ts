@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import socketService from '@/services/socketService';
 
 export interface SecurityAlert {
   id: string;
@@ -51,12 +50,8 @@ export const useSecurityAlerts = () => {
 
 
   useEffect(() => {
-    socketService.on('security_alert', handleNewAlert);
-    socketService.on('extension_requested', handleNewExtensionRequest);
 
     return () => {
-      socketService.off('security_alert', handleNewAlert);
-      socketService.off('extension_requested', handleNewExtensionRequest);
     };
   }, [handleNewAlert, handleNewExtensionRequest]);
 

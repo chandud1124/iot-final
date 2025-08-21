@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
-import socketService from '@/services/socketService';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
@@ -15,33 +14,14 @@ const TestComponent = () => {
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
 
   useEffect(() => {
-    // Listen for connection events
-    socketService.on('connect', () => {
-      setConnectionStatus('connected');
-      addMessage('system', 'Connected to server');
-    });
 
-    socketService.on('disconnect', () => {
-      setConnectionStatus('disconnected');
-      addMessage('system', 'Disconnected from server');
-    });
 
-    // Listen for test events
-    socketService.on('test_event', (data: any) => {
-      addMessage('received', `Received: ${JSON.stringify(data)}`);
-    });
 
-    socketService.on('device_state_changed', (data: any) => {
-      addMessage('device', `Device state changed: ${JSON.stringify(data)}`);
-    });
 
-    socketService.on('device_pir_triggered', (data: any) => {
-      addMessage('pir', `PIR triggered: ${JSON.stringify(data)}`);
-    });
 
-    return () => {
-      socketService.disconnect();
-    };
+  // No socket events to listen for
+  setConnectionStatus('disconnected');
+  return () => {};
   }, []);
 
   const addMessage = (type: string, content: string) => {
@@ -53,22 +33,10 @@ const TestComponent = () => {
   };
 
   const sendTestMessage = () => {
-    socketService.emit('test_message', {
-      message: 'Hello from client!',
-      timestamp: new Date().toISOString()
-    });
     addMessage('sent', 'Test message sent');
   };
 
   const simulateDeviceMessage = () => {
-    socketService.emit('device_command', {
-      deviceId: 'test-device-1',
-      command: {
-        type: 'switch',
-        switchId: 'sw1',
-        action: 'toggle'
-      }
-    });
     addMessage('sent', 'Device command sent');
   };
 

@@ -42,7 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ className, onNavigateClose }) 
   const location = useLocation();
   const { user, isAuthenticated } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const { refreshDevices } = useDevices();
+  const { loadDevices } = useDevices();
   const { start, stop } = useGlobalLoading();
   const [navLock, setNavLock] = useState(false);
   const debounceRef = React.useRef<any>(null);
@@ -63,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ className, onNavigateClose }) 
     debounceRef.current = setTimeout(() => setNavLock(false), 400);
     if (deviceRelated.has(href)) {
       const token = start('nav');
-      refreshDevices({ background: true }).finally(() => stop(token));
+  loadDevices({ background: true }).finally(() => stop(token));
     }
   navigate(href);
   if (onNavigateClose) onNavigateClose();

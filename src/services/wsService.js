@@ -1,6 +1,9 @@
 
 // Native WebSocket client for UI
-const ws = new WebSocket("ws://localhost:4000");
+const WS_URL = typeof window !== 'undefined' && window.WS_URL
+  ? window.WS_URL
+  : 'wss://smart-classroom-1wus.onrender.com/esp32-ws'; // Use your Render backend WebSocket endpoint for production
+const ws = new WebSocket(WS_URL);
 
 export function onStateUpdate(callback) {
   ws.onmessage = (event) => {
