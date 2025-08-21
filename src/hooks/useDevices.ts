@@ -161,31 +161,12 @@ const useDevicesInternal = () => {
   useEffect(() => {
   loadDevices({ force: true });
 
-    // Set up socket listeners
-    // TODO: Replace with native WebSocket logic from wsService.js
-    // socketService.onDeviceStateChanged(handleDeviceStateChanged);
-    // socketService.onDevicePirTriggered(handleDevicePirTriggered);
-    // socketService.onDeviceConnected(handleConnected);
-    // socketService.on('device_toggle_blocked', handleToggleBlocked);
-    // socketService.on('bulk_state_sync', handleBulkSync);
-    // socketService.on('switch_intent', handleSwitchIntent);
-    // socketService.on('bulk_switch_intent', handleBulkIntent);
-    // socketService.on('config_update', handleConfigUpdate);
-    // socketService.on('switch_result', handleSwitchResult);
-    // socketService.on('identify_error', handleIdentifyError);
-
+    // Set up WebSocket listeners for real-time device state sync
+    socketService.onDeviceStateChanged(handleDeviceStateChanged);
+    // You can add other listeners here as needed
     return () => {
-      // Clean up socket listeners
-    // socketService.off('device_state_changed', handleDeviceStateChanged);
-    // socketService.off('device_pir_triggered', handleDevicePirTriggered);
-    // socketService.off('device_connected', handleConnected);
-    // socketService.off('device_toggle_blocked', handleToggleBlocked);
-    // socketService.off('bulk_state_sync', handleBulkSync);
-    // socketService.off('switch_intent', handleSwitchIntent);
-    // socketService.off('bulk_switch_intent', handleBulkIntent);
-    // socketService.off('config_update', handleConfigUpdate);
-    // socketService.off('switch_result', handleSwitchResult);
-    // socketService.off('identify_error', handleIdentifyError);
+      socketService.off('device_state_changed', handleDeviceStateChanged);
+      // Clean up other listeners if added
     };
   }, [handleDeviceStateChanged, handleDevicePirTriggered]);
 
@@ -341,153 +322,18 @@ const useDevicesInternal = () => {
     }
   };
 
-  const bulkToggleType = async (type: string, state: boolean) => {
-    // Optimistic: affect only online devices; do not mutate offline device states
-    setDevices(prev => prev.map(d => ({
-      ...d,
-      switches: d.status === 'online'
-        ? d.switches.map(sw => sw.type === type ? { ...sw, state } : sw)
-        : d.switches
-    })));
-    try {
-      await (deviceAPI as any).bulkToggleByType(type, state);
-      await loadDevices();
-    } catch (e) {
-      await loadDevices();
-      throw e;
-    }
-  };
-
-  const addDevice = async (deviceData: Partial<Device>) => {
-    try {
-      console.log('Sending device data:', deviceData);
-      // Map frontend switch structure to backend expectations
-      const mapped: any = { ...deviceData };
-      if (deviceData.switches) {
-        mapped.switches = deviceData.switches.map(sw => ({
-          name: sw.name,
-          gpio: (sw as any).relayGpio ?? (sw as any).gpio ?? 0,
-          type: sw.type || 'relay'
-        }));
-      }
-  // Sanitize numeric fields to avoid NaN
-  if (mapped.pirGpio !== undefined && isNaN(mapped.pirGpio)) delete mapped.pirGpio;
-  if (mapped.pirAutoOffDelay !== undefined && isNaN(mapped.pirAutoOffDelay)) delete mapped.pirAutoOffDelay;
-      const response = await deviceAPI.createDevice(mapped);
-      
-      if (!response.data) {
-        throw new Error('No data received from server');
-      }
-
-      const newDeviceRaw = response.data.data || response.data;
-      const newDevice = {
-        ...newDeviceRaw,
-        switches: Array.isArray(newDeviceRaw.switches) ? newDeviceRaw.switches.map((sw: any) => ({
-          ...sw,
-          id: sw.id || sw._id?.toString(),
-          relayGpio: sw.relayGpio ?? sw.gpio
-        })) : []
-      };
-      console.log('Device added:', newDevice);
-      
-      setDevices(prev => [...prev, newDevice]);
-      return newDevice;
-    } catch (err: any) {
-      console.error('Error adding device:', err);
-      const errorMessage = err.response?.data?.message || err.message || 'Failed to add device';
-      throw new Error(errorMessage);
-    }
-  };
-
-  const updateDevice = async (deviceId: string, updates: Partial<Device>) => {
-    try {
-      // Map outgoing switches if present
-      const outbound: any = { ...updates };
-      if (updates.switches) {
-        outbound.switches = updates.switches.map(sw => ({
-          ...sw,
-            gpio: (sw as any).relayGpio ?? (sw as any).gpio
-        }));
-      }
-      const response = await deviceAPI.updateDevice(deviceId, outbound);
-      setDevices(prev =>
-        prev.map(device =>
-          device.id === deviceId ? {
-            ...response.data.data,
-            switches: response.data.data.switches.map((sw: any) => ({
-              ...sw,
-              id: sw.id || sw._id?.toString(),
-              relayGpio: sw.relayGpio ?? sw.gpio
-            }))
-          } : device
-        )
-      );
-      console.log(`Device ${deviceId} updated`);
-    } catch (err: any) {
-      console.error('Error updating device:', err);
-      throw err;
-    }
-  };
-
-  const deleteDevice = async (deviceId: string) => {
-    try {
-      await deviceAPI.deleteDevice(deviceId);
-      setDevices(prev => prev.filter(device => device.id !== deviceId));
-      console.log(`Device ${deviceId} deleted`);
-    } catch (err: any) {
-      console.error('Error deleting device:', err);
-      throw err;
-    }
-  };
-
-  const getStats = async (): Promise<DeviceStats> => {
-    try {
-      const response = await deviceAPI.getStats();
-      return response.data.data;
-    } catch (err: any) {
-      console.error('Error getting stats:', err);
-      return {
-        totalDevices: devices.length,
-        onlineDevices: devices.filter(d => d.status === 'online').length,
-        totalSwitches: devices.reduce((sum, d) => sum + d.switches.length, 0),
-        activeSwitches: devices.filter(d => d.status === 'online').reduce(
-          (sum, d) => sum + d.switches.filter(s => s.state).length,
-          0
-        ),
-        totalPirSensors: devices.filter(d => d.pirEnabled).length,
-        activePirSensors: devices.filter(d => d.pirSensor?.triggered).length
-      };
-    }
-  };
-
-  return {
-    devices,
-    loading,
-    error,
-    toggleSwitch,
-    toggleAllSwitches,
-    addDevice,
-    updateDevice,
-    deleteDevice,
-  getStats,
-    refreshDevices: loadDevices,
-    toggleDeviceAllSwitches,
-    bulkToggleType,
-    lastLoaded,
-  isStale: Date.now() - lastLoaded > STALE_MS,
-  bulkPending
-  };
+  return { devices, loading, error, loadDevices, toggleSwitch, toggleAllSwitches, bulkPending };
 };
 
-// Context so state survives route changes (menu navigation)
+// Context + Provider components
+
 const DevicesContext = createContext<ReturnType<typeof useDevicesInternal> | null>(null);
 
 export const DevicesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const value = useDevicesInternal();
   return React.createElement(DevicesContext.Provider, { value }, children);
-};
+}
 
-// Public hook: use context if available, else fall back to standalone (for backward compatibility)
 export const useDevices = () => {
   const ctx = useContext(DevicesContext);
   return ctx || useDevicesInternal();
