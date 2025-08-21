@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
-import socketService from '@/services/socketService';
+// Removed socketService (Socket.IO) import
 
 interface SecurityAlert {
   id: string;
@@ -89,8 +89,7 @@ export const useSecurityNotifications = () => {
         });
       }
     };
-    socketService.on('security_alert', handler);
-    return () => { socketService.off('security_alert', handler); };
+  // TODO: Replace with native WebSocket logic from wsService.js
   }, [user]);
 
   return {

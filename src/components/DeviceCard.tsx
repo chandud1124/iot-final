@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,16 +10,32 @@ import {
   Trash2
 } from 'lucide-react';
 import { SwitchControl } from './SwitchControl';
+import { onStateUpdate, sendSwitchCommand } from '@/services/wsService';
+
 import { Device } from '@/types';
 
 interface DeviceCardProps {
   device: Device;
   onToggleSwitch: (deviceId: string, switchId: string) => void;
-  onEditDevice?: (device: Device) => void; // request opening shared edit dialog
+  onEditDevice?: (device: Device) => void;
   onDeleteDevice?: (deviceId: string) => void;
 }
 
+
 export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDeleteDevice }: DeviceCardProps) {
+  const [switchStates, setSwitchStates] = useState({});
+
+  useEffect(() => {
+    onStateUpdate((data) => {
+      setSwitchStates((prev) => ({ ...prev, [data.gpio]: data.state }));
+    });
+  }, []);
+
+  const handleToggle = (gpio: number) => {
+    const newState = !switchStates[gpio];
+    setSwitchStates((prev) => ({ ...prev, [gpio]: newState }));
+    sendSwitchCommand(gpio, newState);
+  };
 
   return (
     <Card className="w-full max-w-xs sm:max-w-sm p-2 sm:p-4 rounded-lg shadow bg-card flex flex-col">
@@ -39,7 +55,6 @@ export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDel
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 shrink-0"
             onClick={() => onEditDevice && onEditDevice(device)}
           >
             <Settings className="h-4 w-4" />
@@ -71,24 +86,23 @@ export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDel
 
           {/* Switches */}
           <div className="grid gap-2">
-          {device.switches.map((switch_, i) => (
-                  <SwitchControl
-            key={switch_.id || (switch_ as any)._id || `${switch_.name}-${(switch_ as any).gpio || (switch_ as any).relayGpio || i}`}
-                    switch={switch_}
-                    onToggle={() => {
-                      const sid = switch_.id || (switch_ as any)._id;
-                      if (sid) onToggleSwitch(device.id, sid);
-                      else console.warn('Switch missing id when toggling', switch_);
-                    }}
-                    disabled={device.status !== 'online'}
-                    isPirActive={(() => {
-                      if (!switch_.usePir || !device.pirEnabled) return false;
-                      const last = (device as any).pirSensorLastTriggered ? new Date((device as any).pirSensorLastTriggered).getTime() : 0;
-                      const windowMs = ((device.pirAutoOffDelay ?? 30) * 1000);
-                      return !!last && (Date.now() - last) <= windowMs;
-                    })()}
-                  />
-                ))}
+            {device.switches.map((switch_, i) => {
+              const gpio = switch_.gpio || switch_.relayGpio;
+              return (
+                <SwitchControl
+                  key={switch_.id || (switch_ as any)._id || `${switch_.name}-${gpio || i}`}
+                  switch={switch_}
+                  onToggle={() => handleToggle(gpio)}
+                  disabled={device.status !== 'online'}
+                  isPirActive={(() => {
+                    if (!switch_.usePir || !device.pirEnabled) return false;
+                    const last = (device as any).pirSensorLastTriggered ? new Date((device as any).pirSensorLastTriggered).getTime() : 0;
+                    const windowMs = ((device.pirAutoOffDelay ?? 30) * 1000);
+                    return !!last && (Date.now() - last) <= windowMs;
+                  })()}
+                />
+              );
+            })}
           </div>
 
           {/* PIR Sensor Info */}
@@ -110,5 +124,5 @@ export default function DeviceCard({ device, onToggleSwitch, onEditDevice, onDel
       </CardContent>
     </Card>
   );
-};
+}
 
