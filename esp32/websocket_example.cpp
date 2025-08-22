@@ -22,6 +22,7 @@ enum ConnState { WIFI_DISCONNECTED, WIFI_ONLY, BACKEND_CONNECTED };
 ConnState connState = WIFI_DISCONNECTED;
 unsigned long lastWiFiRetry = 0;
 unsigned long lastHeartbeat = 0;
+int reconnectionAttempts = 0;
 
 // Command queue (serialize backend actions)
 struct Command { int idx; bool state; };
@@ -215,6 +216,7 @@ void setupWebSocket() {
   ws.beginSSL(WEBSOCKET_HOST, WEBSOCKET_PORT, WEBSOCKET_PATH);
   ws.onEvent(onWsEvent);
   ws.setReconnectInterval(3000);
+  ws.enableHeartbeat(15000, 3000, 2); // Enable heartbeat with 15s interval, 3s timeout, 2 retries
 }
 
 void onWsEvent(WStype_t type, uint8_t * payload, size_t length) {
@@ -229,11 +231,25 @@ void onWsEvent(WStype_t type, uint8_t * payload, size_t length) {
       doc["secretKey"] = DEVICE_SECRET_KEY;
       String out; serializeJson(doc, out);
       ws.sendTXT(out);
+      
+      // Reset reconnection attempts counter on successful connection
+      reconnectionAttempts = 0;
     } break;
 
     case WStype_DISCONNECTED:
       Serial.println("[WS] Disconnected");
       connState = (WiFi.status()==WL_CONNECTED) ? WIFI_ONLY : WIFI_DISCONNECTED;
+      
+      // Implement exponential backoff for reconnection
+      reconnectionAttempts++;
+      unsigned long backoffTime = min(30000UL, 1000UL * (1 << min(reconnectionAttempts, 5)));
+      Serial.printf("[WS] Will attempt reconnection in %lu ms (attempt #%d)\n", backoffTime, reconnectionAttempts);
+      ws.setReconnectInterval(backoffTime);
+      break;
+      
+    case WStype_ERROR:
+      Serial.println("[WS] Error occurred");
+      logLastError();
       break;
 
     case WStype_TEXT: {
@@ -309,6 +325,14 @@ void sendFullState() {
   Serial.println("[WS] full_state sent");
 }
 
+void logLastError() {
+  // Log the last WebSocket error
+  Serial.printf("[WS] Error details: Connection state: %d, WiFi status: %d\n", 
+                connState, WiFi.status());
+  Serial.printf("[WS] Network info: IP: %s, RSSI: %d dBm\n", 
+                WiFi.localIP().toString().c_str(), WiFi.RSSI());
+}
+
 void sendHeartbeat() {
   unsigned long now = millis();
   if (!ws.isConnected()) return;
@@ -318,6 +342,8 @@ void sendHeartbeat() {
   DynamicJsonDocument doc(256);
   doc["type"] = "heartbeat";
   doc["mac"]  = WiFi.macAddress();
+  doc["uptime"] = millis() / 1000; // Add uptime in seconds
+  doc["rssi"] = WiFi.RSSI(); // Add signal strength
   String out; serializeJson(doc, out);
   ws.sendTXT(out);
 }
