@@ -46,6 +46,7 @@ const settingsRoutes = require('./routes/settings');
 
 // Import services (only those actively used)
 const scheduleService = require('./services/scheduleService');
+const mqttService = require('./services/mqttService');
 // Removed legacy DeviceSocketService/TestSocketService/ESP32SocketService for cleanup
 
 // Import Google Calendar routes
@@ -518,12 +519,62 @@ function emitDeviceStateChanged(device, meta = {}) {
 // Raw WebSocket server for ESP32 devices (simpler than Socket.IO on microcontroller)
 const wsDevices = new Map(); // mac -> ws
 global.wsDevices = wsDevices;
-const wss = new WebSocketServer({ server, path: '/esp32-ws' });
-logger.info('Raw WebSocket /esp32-ws endpoint ready');
+const wss = new WebSocketServer({ 
+  server, 
+  path: '/esp32-ws',
+  // Add ping interval to detect dead connections faster
+  clientTracking: true,
+  perMessageDeflate: {
+    zlibDeflateOptions: {
+      chunkSize: 1024,
+      memLevel: 7,
+      level: 3
+    },
+    zlibInflateOptions: {
+      chunkSize: 10 * 1024
+    },
+    concurrencyLimit: 10,
+    threshold: 1024 // Only compress messages larger than 1KB
+  }
+});
+logger.info('Raw WebSocket /esp32-ws endpoint ready with optimized settings');
+
+// Add connection health check interval (every 30 seconds)
+const pingInterval = setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      logger.warn(`Terminating dead WebSocket connection for device: ${ws.mac || 'unknown'}`);
+      return ws.terminate();
+    }
+    
+    // Mark as inactive for next cycle
+    ws.isAlive = false;
+    // Send ping
+    ws.ping();
+    
+    // Update last activity if we haven't heard in a while
+    if (Date.now() - ws.lastActivity > 60000) { // 1 minute
+      // If device is identified, update its status in DB
+      if (ws.mac) {
+        const Device = require('./models/Device');
+        Device.findOneAndUpdate(
+          { macAddress: ws.mac },
+          { $set: { status: 'warning', lastSeen: new Date() } }
+        ).catch(err => logger.error('Error updating device status:', err));
+      }
+    }
+  });
+}, 30000);
 
 wss.on('connection', (ws) => {
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
+  
+  // Send initial ping to verify connection
+  ws.ping();
+  
+  // Set last activity timestamp
+  ws.lastActivity = Date.now();
   ws.on('message', async (msg) => {
     let data;
     try { data = JSON.parse(msg.toString()); } catch { return; }
